@@ -34,13 +34,17 @@ class OllamaProvider(BaseLLMProvider):
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        # Ollama returns embeddings in data['embedding'] or data['embeddings'] depending on model
-        emb = data.get("embedding") or data.get("embeddings")
+        # Ollama /api/embed returns {"model":"...", "embeddings":[[...]]} for single input
+        embeddings = data.get("embeddings")
+        if isinstance(embeddings, list) and len(embeddings) > 0:
+            first = embeddings[0]
+            if isinstance(first, list):
+                return normalize(list(map(float, first)))
+            return normalize(list(map(float, embeddings)))
+        # Fallback for older /api/embeddings format: {"embedding": [...]}
+        emb = data.get("embedding")
         if isinstance(emb, list):
             return normalize(list(map(float, emb)))
-        # fallback: try first item
-        if isinstance(emb, dict) and "data" in emb:
-            return normalize(list(map(float, emb["data"][0]["embedding"])))
         raise ValueError("Unexpected embed response from ollama")
 
     def embed_text(self, text: str) -> list[float]:
