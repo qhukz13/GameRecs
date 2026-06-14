@@ -1,0 +1,65 @@
+@api = http://localhost:8000/api/v1
+@token = paste-access-token-here
+
+### Register
+POST {{api}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "alex@example.com",
+  "username": "alex",
+  "password": "password123"
+}
+
+### Login
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "alex@example.com",
+  "password": "password123"
+}
+
+### Create group
+POST {{api}}/groups
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Friday Co-op"
+}
+
+### Add game
+POST {{api}}/games
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "external_id": "steam:1245620",
+  "title": "Deep Rock Galactic",
+  "description": "Four player co-op mining, combat, survival, and chaotic extraction.",
+  "genres": ["action", "survival"],
+  "tags": ["combat", "chaos", "co-op"],
+  "players_min": 1,
+  "players_max": 4
+}
+
+### Create review
+POST {{api}}/reviews
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "game_id": "paste-game-id-here",
+  "rating": 9,
+  "review_text": "Great combat and chaos. Our group loved the survival pressure."
+}
+
+### Generate recommendations
+POST {{api}}/groups/paste-group-id-here/recommendations/generate
+Authorization: Bearer {{token}}
+
+### Dashboard
+GET {{api}}/dashboard
+Authorization: Bearer {{token}}
+
