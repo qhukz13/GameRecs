@@ -195,10 +195,16 @@ export function RecommendationsPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Button disabled={!selectedGroupId || generating} onClick={() => void generate(false)} title="Generate recommendations (does not import games)">
-          <Sparkles className="h-4 w-4" />
-          {generating ? 'Generating...' : 'Generate'}
-        </Button>
+        <div className="flex gap-2">
+          <Button disabled={!selectedGroupId || generating} onClick={() => void generate(false)} title="Generate recommendations (does not import games)">
+            <Sparkles className="h-4 w-4" />
+            {generating ? 'Generating...' : 'Generate'}
+          </Button>
+          <Button disabled={!selectedGroupId || generating} onClick={() => void generate(true)} title="Generate and persist recommendations (imports games into DB)">
+            <Sparkles className="h-4 w-4" />
+            {generating ? 'Saving...' : 'Generate & Persist'}
+          </Button>
+        </div>
         <div className="flex items-center gap-2">
           <Button disabled={!selectedGroupId} onClick={() => setClearConfirmOpen(true)}>Clear</Button>
           <Button disabled={!selectedGroupId || !isTransient} variant="outline" onClick={() => clearTransient()}>Clear transient</Button>
