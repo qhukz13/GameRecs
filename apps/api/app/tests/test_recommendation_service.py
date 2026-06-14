@@ -76,3 +76,26 @@ def test_generate_for_group_creates_and_saves_recommendations() -> None:
     assert recs.saved[0].game_id == g1.id
     assert recs.saved[1].game_id == g2.id
     assert "explained" in recs.saved[0].explanation
+
+
+def test_generate_filters_out_games_without_release_date() -> None:
+    """Games with no release_date should be filtered out because _is_new_game returns False."""
+    group_id = uuid4()
+
+    g1 = _DummyGame(uuid4(), "Old Game", tags=["co-op"], release_date=datetime(2018, 1, 1, tzinfo=timezone.utc))
+    g2 = _DummyGame(uuid4(), "No Date Game", tags=["co-op"], release_date=None)
+    g3 = _DummyGame(uuid4(), "New Game", tags=["co-op"], release_date=datetime(2022, 6, 1, tzinfo=timezone.utc))
+
+    candidates = [(g1, 0.9), (g2, 0.85), (g3, 0.8)]
+    games = _GamesRepoStub(candidates)
+    reviews = _ReviewsRepoStub()
+    recs = _RecommendationsRepoStub()
+    profiles = _ProfileServiceStub()
+    ai = _AIStub()
+
+    service = RecommendationService(games=games, reviews=reviews, recommendations=recs, profiles=profiles, ai=ai)
+    saved = service.generate_for_group(group_id, limit=5)
+
+    # Only g3 (new, 2022) should pass the co-op + new game filter
+    assert len(saved) == 1
+    assert recs.saved[0].game_id == g3.id

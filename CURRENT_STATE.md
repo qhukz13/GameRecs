@@ -12,10 +12,37 @@
 
 ---
 
-## Фаза 2: Улучшение тестов
+## ✅ Фаза 2: Улучшение тестов (ЗАВЕРШЕНА)
+
+### Что сделано:
+7. **Тесты API роутеров** (`test_api_routers.py`):
+   - `test_health` — проверка /health
+   - `test_auth_register_requires_email_and_password` — валидация полей
+   - `test_create_review_validates_game_exists` — 404 для несуществующей игры
+   - `test_external_steam_search_requires_query` — пустой результат для пустого запроса
+   - `test_list_groups_returns_list` — список групп
+   - `test_dashboard_returns_structure` — структура дашборда
+
+8. **Тесты Steam integration** (`test_steam_integration.py`):
+   - `test_generate_falls_back_to_local_when_steam_fails` — fallback при ошибке Steam
+   - `test_generate_skips_non_game_steam_entries` — пропуск non-game записей
+   - `test_generate_skips_blacklisted_steam_categories` — пропуск DLC/саундтреков
+   - `test_parse_steam_release_date` — парсинг дат
+   - `test_is_new_game` — проверка фильтра `_is_new_game`
+
+9. **Тест `release_date=None`** (`test_recommendation_service.py`):
+   - `test_generate_filters_out_games_without_release_date` — игры без даты и старые фильтруются
+
+10. **Тесты `steam_utils.py`** (`test_steam_utils.py`):
+    - `test_has_blacklist_categories_true`/`_false`
+    - `test_is_game_like_true`/`_false`
+    - `test_constants_are_non_empty`
+
+---
+
+## Фаза 3: Фронтенд
 
 ### Очередь задач:
-7. [ ] Добавить тесты для API роутеров через `fastapi.TestClient`
-8. [ ] Добавить тесты для Steam integration (моки `requests`)
-9. [ ] Добавить тест на `release_date=None` в `RecommendationService`
-10. [ ] Добавить тесты для `steam_utils.py`
+11. [ ] Добавить UI для Steam search/import
+12. [ ] Добавить кнопку "Generate & Persist" в RecommendationsPanel
+13. [ ] Реализовать auto-refresh токенов в ApiClient
