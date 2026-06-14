@@ -12,12 +12,13 @@ from app.application.services.recommendation_service import (
 
 
 class _DummyGame:
-    def __init__(self, id, title, tags=None, genres=None, release_date=None):
+    def __init__(self, id, title, tags=None, genres=None, release_date=None, description=""):
         self.id = id
         self.title = title
         self.tags = tags or []
         self.genres = genres or []
         self.release_date = release_date
+        self.description = description
 
 
 class _GamesRepoStub:

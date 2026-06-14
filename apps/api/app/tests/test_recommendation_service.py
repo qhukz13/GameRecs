@@ -5,12 +5,13 @@ from app.application.services.recommendation_service import RecommendationServic
 
 
 class _DummyGame:
-    def __init__(self, id: UUID, title: str, tags=None, genres=None, release_date=None):
+    def __init__(self, id: UUID, title: str, tags=None, genres=None, release_date=None, description=""):
         self.id = id
         self.title = title
         self.tags = tags or []
         self.genres = genres or []
         self.release_date = release_date
+        self.description = description
 
 
 class _GamesRepoStub:

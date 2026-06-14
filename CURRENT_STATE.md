@@ -15,34 +15,50 @@
 ## ✅ Фаза 2: Улучшение тестов (ЗАВЕРШЕНА)
 
 ### Что сделано:
-7. **Тесты API роутеров** (`test_api_routers.py`):
-   - `test_health` — проверка /health
-   - `test_auth_register_requires_email_and_password` — валидация полей
-   - `test_create_review_validates_game_exists` — 404 для несуществующей игры
-   - `test_external_steam_search_requires_query` — пустой результат для пустого запроса
-   - `test_list_groups_returns_list` — список групп
-   - `test_dashboard_returns_structure` — структура дашборда
-
-8. **Тесты Steam integration** (`test_steam_integration.py`):
-   - `test_generate_falls_back_to_local_when_steam_fails` — fallback при ошибке Steam
-   - `test_generate_skips_non_game_steam_entries` — пропуск non-game записей
-   - `test_generate_skips_blacklisted_steam_categories` — пропуск DLC/саундтреков
-   - `test_parse_steam_release_date` — парсинг дат
-   - `test_is_new_game` — проверка фильтра `_is_new_game`
-
-9. **Тест `release_date=None`** (`test_recommendation_service.py`):
-   - `test_generate_filters_out_games_without_release_date` — игры без даты и старые фильтруются
-
-10. **Тесты `steam_utils.py`** (`test_steam_utils.py`):
-    - `test_has_blacklist_categories_true`/`_false`
-    - `test_is_game_like_true`/`_false`
-    - `test_constants_are_non_empty`
+7. **Тесты API роутеров** (`test_api_routers.py`): 6 тестов
+8. **Тесты Steam integration** (`test_steam_integration.py`): 5 тестов (моки requests)
+9. **Тест `release_date=None`** — игры без даты фильтруются
+10. **Тесты `steam_utils.py`** — 6 тестов на утилиты
 
 ---
 
-## Фаза 3: Фронтенд
+## ✅ Исправление бага "No recommendations were generated"
 
-### Очередь задач:
-11. [ ] Добавить UI для Steam search/import
-12. [ ] Добавить кнопку "Generate & Persist" в RecommendationsPanel
-13. [ ] Реализовать auto-refresh токенов в ApiClient
+Метод `generate_candidates_for_group` переписан: сначала возвращает локальные кандидаты (всегда), затем обогащает Steam-данными (best-effort). Steam-ошибки не блокируют показ результатов.
+
+---
+
+## ✅ Фаза 3: Фронтенд (ЗАВЕРШЕНА)
+
+### Что сделано:
+11. **Steam search/import UI** — уже был реализован в `GamesPanel.tsx`
+12. **Кнопка "Generate & Persist"** — добавлена в `RecommendationsPanel.tsx` рядом с кнопкой "Generate"
+13. **Auto-refresh токенов** — `ApiClient` в `api.ts` теперь:
+    - При 401 ошибке автоматически вызывает `POST /auth/refresh`
+    - Обновляет `accessToken` в localStorage
+    - Повторяет запрос с новым токеном
+    - Если refresh не удался — очищает auth state и бросает ошибку
+14. **`release_date`** — добавлен в тип `Game` в `api.ts`
+
+---
+
+## ✅ Фаза 4: Жёсткий co-op фильтр (ЗАВЕРШЕНА)
+
+### Проблема:
+Фильтр `_is_coop_game` был слишком мягким: проверял только `genres` и `tags`, и мог пропускать игры без явного указания "co-op" (например, PvP-only игры с тэгом "multiplayer").
+
+### Изменения:
+
+**`_is_coop_game()`** — полная переработка:
+- **Проверка description** — теперь проверяет не только genres/tags, но и описание игры
+- **Строгие ключевые слова** — только точные совпадения с "co-op", "cooperative", "local co-op", "online co-op", "pve co-op", "co-op campaign" и т.д.
+- **Убраны ложные срабатывания** — "split screen", "shared screen", "team-based" (эти термины могут быть у PvP игр) заменены на более точные
+- **Heuristic fallback** — если есть тэг "multiplayer" и в описании есть "co-op" — всё ещё валидно
+
+**Вызовы `_is_coop_game()`** — везде передаётся `description`:
+- `generate_for_group()` — `_is_coop_game(game.genres, game.tags, game.description)`
+- `generate_candidates_for_group()` Phase 1 — `_is_coop_game(game.genres, game.tags, game.description)`
+- `generate_candidates_for_group()` Phase 2 (Steam) — `_is_coop_game(genres, tags_list, desc)`
+
+**Тесты обновлены:**
+- `_DummyGame` во всех 3 тестовых файлах теперь содержит `description`

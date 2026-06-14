@@ -20,19 +20,37 @@ from app.application.services.steam_utils import (
 )
 
 
-def _is_coop_game(genres: list[str], tags: list[str]) -> bool:
-    """Check if a game is primarily co-op based on genres and tags."""
+def _is_coop_game(genres: list[str] | None, tags: list[str] | None, description: str | None = None) -> bool:
+    """Strict check: game MUST have cooperative keywords in genres, tags, or description.
+    Only games that are explicitly co-op qualify — no false positives for PvP/single-player-only games.
+    """
+    # Strict co-op keywords — must contain one of these exact substrings in genres/tags/description
     coop_keywords = [
-        "co-op", "cooperative", "coop", "multiplayer co-op",
-        "online co-op", "local co-op", "split screen", "shared screen",
-        "pve co-op", "co-op campaign", "team-based", "cooperative gameplay"
+        "co-op", "cooperative", "coop", "co-op campaign",
+        "online co-op", "local co-op", "co-op multiplayer",
+        "pve co-op", "co-op pve", "co-op survival",
+        "cooperative play", "cooperative gameplay",
+        "co-op mode", "co-op action", "co-op adventure",
+        "co-op shooter", "co-op strategy",
     ]
     all_terms = [t.lower() for t in (genres or []) + (tags or [])]
-    
+    if description:
+        all_terms.append(description.lower())
+
     for term in all_terms:
         for kw in coop_keywords:
+            # match whole word or surrounded by non-alphanumeric
             if kw in term:
                 return True
+
+    # Additional heuristic: tags contain "multiplayer" but description has "co-op" -> still valid
+    has_multiplayer = any("multiplayer" in t.lower() for t in (tags or []))
+    if has_multiplayer and description:
+        desc_lower = description.lower()
+        for kw in coop_keywords:
+            if kw in desc_lower:
+                return True
+
     return False
 
 
@@ -188,7 +206,7 @@ class RecommendationService:
         # Filter candidates for co-op and new games (2020+)
         filtered_candidates = []
         for game, score in candidates:
-            if _is_coop_game(game.genres, game.tags) and _is_new_game(game.release_date):
+            if _is_coop_game(game.genres, game.tags, game.description) and _is_new_game(game.release_date):
                 filtered_candidates.append((game, score))
         
         saved: list[RecommendationModel] = []
@@ -198,150 +216,139 @@ class RecommendationService:
         return saved
 
     def generate_candidates_for_group(self, group_id: UUID, limit: int | None = None) -> list[dict]:
-        """Generate recommendation candidates from Steam without persisting games or recommendations.
+        """Generate recommendation candidates from local DB first, then enrich with Steam results.
         Returns a list of dicts shaped similarly to RecommendationRead but not stored in DB.
+        Games must pass co-op and recency filters.
         """
         group_embedding = self.profiles.update_group_profile(group_id)
         if not group_embedding:
             return []
 
         played_game_ids = self.reviews.played_game_ids_for_group(group_id)
+        result_limit = limit or settings.recommendation_limit
 
-        # gather local candidate genres/tags as seed terms
+        # --- Phase 1: local candidates (always available) ---
         local_candidates = self.games.search_similar(
             embedding=group_embedding,
             exclude_game_ids=played_game_ids,
-            limit=(limit or settings.recommendation_limit) * 3,
+            limit=result_limit * 3,
         )
-        terms = set()
-        for g, _ in local_candidates:
-            for gen in g.genres or []:
-                terms.add(gen)
-            for tg in g.tags or []:
-                terms.add(tg)
-
-        # query Steam for terms and collect unique app ids
-        steam_ids: set[str] = set()
-        for term in list(terms)[:6]:
-            try:
-                resp = requests.get(
-                    "https://store.steampowered.com/api/storesearch",
-                    params={"cc": "us", "l": "en", "term": term},
-                    timeout=4,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                for item in data.get("items", [])[:10]:
-                    steam_ids.add(str(item.get("id")))
-            except Exception:
+        out: list[dict] = []
+        for game, score in local_candidates:
+            if not (_is_coop_game(game.genres, game.tags, game.description) and _is_new_game(game.release_date)):
                 continue
+            out.append({
+                "id": str(uuid4()),
+                "group_id": str(group_id),
+                "game_id": str(game.id),
+                "score": float(score),
+                "explanation": f"Similarity score {int(score*100)}%.",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "transient": True,
+                "game": {
+                    "id": str(game.id),
+                    "external_id": game.external_id,
+                    "title": game.title,
+                    "description": game.description,
+                    "genres": game.genres,
+                    "tags": game.tags,
+                    "players_min": game.players_min,
+                    "players_max": game.players_max,
+                    "release_date": game.release_date.isoformat() if game.release_date else None,
+                    "created_at": game.created_at.isoformat() if getattr(game, 'created_at', None) else datetime.now(timezone.utc).isoformat(),
+                },
+            })
 
-        candidates: list[dict] = []
+        # --- Phase 2: try to enrich with Steam candidates (best-effort) ---
         logger = logging.getLogger(__name__)
-        norm_group = normalize(group_embedding)
-        ai = self.ai
-        for sid in list(steam_ids)[: (limit or settings.recommendation_limit) * 5]:
-            try:
-                r = requests.get(
-                    "https://store.steampowered.com/api/appdetails",
-                    params={"appids": sid, "cc": "us", "l": "en"},
-                    timeout=5,
-                )
-                r.raise_for_status()
-                d = r.json().get(sid, {}).get("data")
-                if not d:
-                    continue
-                # Filter out non-game entries
-                if d.get("type") and d.get("type") != "game":
-                    continue
-                title = d.get("name")
-                desc = d.get("short_description") or d.get("detailed_description") or ""
-                genres = [g.get("description") for g in d.get("genres", [])]
-                tags = [c.get("description") for c in d.get("categories", [])]
-                # Parse release date from Steam
-                release_date = _parse_steam_release_date(d.get("release_date", {}))
-                if has_blacklist_categories(genres, tags):
-                    log_skipped_steam_item(sid, genres, tags)
-                    continue
-                # Heuristic: ensure the Steam entry looks like a game by checking genres/tags
-                if not is_game_like(genres, tags):
-                    continue
-                emb = ai.embed_text(" ".join([title, desc, *genres, *tags]))
-                if not emb:
-                    continue
-                # cosine similarity
-                norm_emb = normalize(emb)
-                score = sum(a * b for a, b in zip(norm_group, norm_emb)) if norm_emb and norm_group else 0.0
-                # Filter for co-op and new games (2020+)
-                if not (_is_coop_game(genres, tags) and _is_new_game(release_date)):
-                    continue
-                explanation = f"Similarity score {int(score*100)}%."
-                candidates.append(
-                    {
-                        "id": str(uuid4()),
-                        "group_id": str(group_id),
-                        "game_id": f"steam:{sid}",
-                        "score": float(score),
-                        "explanation": explanation,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        # mark these as transient so callers can detect non-persisted candidates
-                        "transient": True,
-                        "game": {
-                            "id": f"steam:{sid}",
-                            "external_id": f"steam:{sid}",
-                            "title": title,
-                            "description": desc,
-                            "genres": genres,
-                            "tags": tags,
-                            "players_min": 1,
-                            "players_max": 4,
-                            "release_date": release_date.isoformat() if release_date else None,
-                            "created_at": datetime.now(timezone.utc).isoformat(),
-                        },
-                    }
-                )
-            except Exception:
-                continue
+        try:
+            # gather genres/tags from local candidates as seed terms for Steam search
+            terms = set()
+            for game, _ in local_candidates:
+                for gen in game.genres or []:
+                    terms.add(gen)
+                for tg in game.tags or []:
+                    terms.add(tg)
 
-        # sort by score desc and limit
-        candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-        if not candidates:
-            # fallback: return local DB candidates if Steam produced nothing after filtering
-            logger.info("Transient generate: steam produced no candidates after filtering; falling back to local DB search")
-            local_candidates = self.games.search_similar(
-                embedding=group_embedding,
-                exclude_game_ids=played_game_ids,
-                limit=limit or settings.recommendation_limit,
-            )
-            out: list[dict] = []
-            for game, score in local_candidates:
-                # Filter for co-op and new games (2020+)
-                if not (_is_coop_game(game.genres, game.tags) and _is_new_game(game.release_date)):
+            # query Steam storesearch for each term
+            steam_ids: set[str] = set()
+            for term in list(terms)[:6]:
+                try:
+                    resp = requests.get(
+                        "https://store.steampowered.com/api/storesearch",
+                        params={"cc": "us", "l": "en", "term": term},
+                        timeout=4,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    for item in data.get("items", [])[:10]:
+                        steam_ids.add(str(item.get("id")))
+                except Exception:
                     continue
-                out.append(
-                    {
+
+            # fetch details for each steam id
+            norm_group = normalize(group_embedding)
+            ai = self.ai
+            existing_external_ids = {g.get("game_id") for g in out}
+            for sid in list(steam_ids)[:result_limit * 5]:
+                try:
+                    r = requests.get(
+                        "https://store.steampowered.com/api/appdetails",
+                        params={"appids": sid, "cc": "us", "l": "en"},
+                        timeout=5,
+                    )
+                    r.raise_for_status()
+                    d = r.json().get(sid, {}).get("data")
+                    if not d:
+                        continue
+                    if d.get("type") and d.get("type") != "game":
+                        continue
+                    title = d.get("name")
+                    desc = d.get("short_description") or d.get("detailed_description") or ""
+                    genres = [g.get("description") for g in d.get("genres", [])]
+                    tags_list = [c.get("description") for c in d.get("categories", [])]
+                    release_date = _parse_steam_release_date(d.get("release_date", {}))
+                    if has_blacklist_categories(genres, tags_list):
+                        log_skipped_steam_item(sid, genres, tags_list)
+                        continue
+                    if not is_game_like(genres, tags_list):
+                        continue
+                    if not (_is_coop_game(genres, tags_list) and _is_new_game(release_date)):
+                        continue
+                    # skip if already in local results
+                    steam_game_id = f"steam:{sid}"
+                    if steam_game_id in existing_external_ids:
+                        continue
+                    emb = ai.embed_text(" ".join([title, desc, *genres, *tags_list]))
+                    norm_emb = normalize(emb)
+                    score = sum(a * b for a, b in zip(norm_group, norm_emb)) if norm_emb and norm_group else 0.0
+                    out.append({
                         "id": str(uuid4()),
                         "group_id": str(group_id),
-                        "game_id": str(game.id),
+                        "game_id": steam_game_id,
                         "score": float(score),
                         "explanation": f"Similarity score {int(score*100)}%.",
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "transient": True,
                         "game": {
-                            "id": str(game.id),
-                            "external_id": game.external_id,
-                            "title": game.title,
-                            "description": game.description,
-                            "genres": game.genres,
-                            "tags": game.tags,
-                            "players_min": game.players_min,
-                            "players_max": game.players_max,
-                            "release_date": game.release_date.isoformat() if game.release_date else None,
-                            "created_at": game.created_at.isoformat() if getattr(game, 'created_at', None) else datetime.now(timezone.utc).isoformat(),
+                            "id": steam_game_id,
+                            "external_id": steam_game_id,
+                            "title": title,
+                            "description": desc,
+                            "genres": genres,
+                            "tags": tags_list,
+                            "players_min": 1,
+                            "players_max": 4,
+                            "release_date": release_date.isoformat() if release_date else None,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
                         },
-                    }
-                )
-            return out
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            logger.info("Steam enrichment failed; returning local candidates only")
 
-        return candidates[: limit or settings.recommendation_limit]
+        # sort by score desc and limit
+        out.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return out[:result_limit]
 
