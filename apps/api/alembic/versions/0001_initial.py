@@ -12,6 +12,11 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from app.core.config import settings
+
+# Read dimension from settings so the migration stays in sync with the app config.
+_DIM = settings.embedding_dim
+
 revision: str = "0001_initial"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
@@ -27,7 +32,7 @@ def upgrade() -> None:
         sa.Column("email", sa.String(length=320), nullable=False),
         sa.Column("username", sa.String(length=80), nullable=False),
         sa.Column("hashed_password", sa.String(length=255), nullable=False),
-        sa.Column("profile_embedding", pgvector.sqlalchemy.Vector(dim=8), nullable=True),
+        sa.Column("profile_embedding", pgvector.sqlalchemy.Vector(dim=_DIM), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("email"),
@@ -53,7 +58,7 @@ def upgrade() -> None:
         ),
         sa.Column("players_min", sa.Integer(), nullable=False),
         sa.Column("players_max", sa.Integer(), nullable=False),
-        sa.Column("embedding", pgvector.sqlalchemy.Vector(dim=8), nullable=True),
+        sa.Column("embedding", pgvector.sqlalchemy.Vector(dim=_DIM), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("external_id"),
@@ -63,7 +68,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("owner_id", sa.Uuid(), nullable=False),
-        sa.Column("profile_embedding", pgvector.sqlalchemy.Vector(dim=8), nullable=True),
+        sa.Column("profile_embedding", pgvector.sqlalchemy.Vector(dim=_DIM), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -109,7 +114,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("sentiment", sa.String(length=32), server_default="neutral", nullable=False),
-        sa.Column("review_embedding", pgvector.sqlalchemy.Vector(dim=8), nullable=True),
+        sa.Column("review_embedding", pgvector.sqlalchemy.Vector(dim=_DIM), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.CheckConstraint("rating >= 1 AND rating <= 10", name="ck_reviews_rating_range"),
         sa.ForeignKeyConstraint(["game_id"], ["games.id"], ondelete="CASCADE"),

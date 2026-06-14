@@ -97,7 +97,13 @@ def test_generate_falls_back_to_local_when_steam_fails(mock_get) -> None:
     mock_get.side_effect = Exception("Connection refused")
 
     group_id = uuid4()
-    g1 = _DummyGame(uuid4(), "Local Co-op", tags=["co-op"], release_date=datetime(2022, 1, 1, tzinfo=timezone.utc))
+    g1 = _DummyGame(
+        uuid4(),
+        "Local Co-op",
+        tags=["co-op"],
+        release_date=datetime(2022, 1, 1, tzinfo=timezone.utc),
+        description="A co-op game."
+    )
 
     games = _GamesRepoStub(candidates=[(g1, 0.9)])
     reviews = _ReviewsRepoStub()
@@ -193,7 +199,29 @@ def test_parse_steam_release_date() -> None:
 
 def test_is_new_game() -> None:
     """Test _is_new_game helper."""
+    from app.application.services.recommendation_service import _is_new_game
     assert _is_new_game(datetime(2022, 6, 1, tzinfo=timezone.utc)) is True
     assert _is_new_game(datetime(2020, 1, 1, tzinfo=timezone.utc)) is True
     assert _is_new_game(datetime(2019, 12, 31, tzinfo=timezone.utc)) is False
     assert _is_new_game(None) is False
+    
+    # Test release_date parsing and filtering
+    assert _parse_steam_release_date({"date": "Oct 21, 2022", "coming_soon": False}) is not None
+    assert _parse_steam_release_date({"date": "2022-10-21", "coming_soon": False}) is not None
+    assert _parse_steam_release_date({"date": "Oct 21, 2022", "coming_soon": True}) is None
+    assert _parse_steam_release_date({"date": "2022-10-21", "coming_soon": True}) is None
+    assert _parse_steam_release_date({}) is None
+    assert _parse_steam_release_date(None) is None
+    
+    # Test co-op game filtering with release_date
+    coop_game = _DummyGame(
+        uuid4(),
+        "Co-op Adventure",
+        tags=["co-op"],
+        release_date=datetime(2022, 10, 21, tzinfo=timezone.utc),
+        description="A co-op adventure game."
+    )
+    # Import the correct helper
+    from app.application.services.recommendation_service import _is_coop_game
+    assert _is_coop_game(coop_game.genres, coop_game.tags, coop_game.description) is True
+    assert _is_new_game(coop_game.release_date) is True

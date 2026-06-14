@@ -44,6 +44,12 @@ class GameRepository:
     def list(self) -> List[GameModel]:
         return list(self.db.scalars(select(GameModel).order_by(GameModel.title.asc())))
 
+    def find_by_external_id(self, external_id: str) -> Optional[GameModel]:
+        """Return the game with the given external_id, or None."""
+        return self.db.scalars(
+            select(GameModel).where(GameModel.external_id == external_id)
+        ).first()
+
     def delete(self, game_id: UUID) -> None:
         game = self.get(game_id)
         if not game:

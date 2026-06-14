@@ -1,13 +1,28 @@
-FROM node:22-alpine
+FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-COPY . .
+# system deps
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-EXPOSE 3000
+# install dependencies FIRST
+COPY pyproject.toml ./
 
-CMD ["npm", "run", "dev"]
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir .
 
+# copy code
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
+COPY scripts ./scripts
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

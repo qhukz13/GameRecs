@@ -1,7 +1,7 @@
 from uuid import UUID
 import logging
 from datetime import datetime, timezone
-
+from app.application.services.steam_parsing import _parse_steam_release_date
 from app.application.services.ai_service import AIService
 from app.application.services.profile_service import ProfileService
 from app.core.config import settings
@@ -20,9 +20,10 @@ from app.application.services.steam_utils import (
 )
 
 
-def _is_coop_game(genres: list[str] | None, tags: list[str] | None, description: str | None = None) -> bool:
+def _is_coop_game(genres: list[str] | None, tags: list[str] | None, description: str | None = None, release_date: datetime | None = None) -> bool:
     """Strict check: game MUST have cooperative keywords in genres, tags, or description.
-    Only games that are explicitly co-op qualify — no false positives for PvP/single-player-only games.
+    Also ensures the game is new (released in 2020 or later).
+    Only games that are explicitly co-op and new qualify — no false positives for PvP/single-player-only games.
     """
     # Strict co-op keywords — must contain one of these exact substrings in genres/tags/description
     coop_keywords = [
@@ -61,31 +62,6 @@ def _is_new_game(release_date: datetime | None) -> bool:
     return release_date.year >= 2020
 
 
-def _parse_steam_release_date(release_data: dict) -> datetime | None:
-    """Parse release date from Steam API response."""
-    if not release_data:
-        return None
-    # Steam returns release_date as a dict with 'date' and 'coming_soon' fields
-    date_str = release_data.get("date")
-    coming_soon = release_data.get("coming_soon", False)
-    if coming_soon or not date_str:
-        return None
-    # Date format examples: "Oct 21, 2022", "21 Oct, 2022", "2022-10-21"
-    formats = [
-        "%b %d, %Y",
-        "%d %b, %Y",
-        "%Y-%m-%d",
-        "%B %d, %Y",
-        "%d %B, %Y",
-    ]
-    for fmt in formats:
-        try:
-            return datetime.strptime(date_str.strip(), fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    return None
-
-
 class RecommendationService:
     def __init__(
         self,
@@ -102,6 +78,9 @@ class RecommendationService:
         self.ai = ai
 
     def generate_for_group(self, group_id: UUID, limit: int | None = None) -> list[RecommendationModel]:
+        """
+        Generate recommendations for a group, filtering by co-op and recency (2020+).
+        """
         group_embedding = self.profiles.update_group_profile(group_id)
         if not group_embedding:
             return []
@@ -206,8 +185,12 @@ class RecommendationService:
         # Filter candidates for co-op and new games (2020+)
         filtered_candidates = []
         for game, score in candidates:
-            if _is_coop_game(game.genres, game.tags, game.description) and _is_new_game(game.release_date):
+            if _is_coop_game(game.genres, game.tags, game.description, game.release_date) and _is_new_game(game.release_date or datetime(2019, 12, 31, tzinfo=timezone.utc)):
                 filtered_candidates.append((game, score))
+        
+        # Fallback: if no strict co-op candidates, use top similarity matches
+        if not filtered_candidates:
+            filtered_candidates = candidates
         
         saved: list[RecommendationModel] = []
         for game, score in filtered_candidates:
@@ -233,6 +216,8 @@ class RecommendationService:
             exclude_game_ids=played_game_ids,
             limit=result_limit * 3,
         )
+        
+        # First pass: strict co-op + new game filter
         out: list[dict] = []
         for game, score in local_candidates:
             if not (_is_coop_game(game.genres, game.tags, game.description) and _is_new_game(game.release_date)):
@@ -258,6 +243,31 @@ class RecommendationService:
                     "created_at": game.created_at.isoformat() if getattr(game, 'created_at', None) else datetime.now(timezone.utc).isoformat(),
                 },
             })
+        
+        # Fallback: if no co-op/new games pass the filter, show top similarity matches without strict filtering
+        if not out and local_candidates:
+            for game, score in local_candidates:
+                out.append({
+                    "id": str(uuid4()),
+                    "group_id": str(group_id),
+                    "game_id": str(game.id),
+                    "score": float(score),
+                    "explanation": f"Similarity score {int(score*100)}%.",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "transient": True,
+                    "game": {
+                        "id": str(game.id),
+                        "external_id": game.external_id,
+                        "title": game.title,
+                        "description": game.description,
+                        "genres": game.genres,
+                        "tags": game.tags,
+                        "players_min": game.players_min,
+                        "players_max": game.players_max,
+                        "release_date": game.release_date.isoformat() if game.release_date else None,
+                        "created_at": game.created_at.isoformat() if getattr(game, 'created_at', None) else datetime.now(timezone.utc).isoformat(),
+                    },
+                })
 
         # --- Phase 2: try to enrich with Steam candidates (best-effort) ---
         logger = logging.getLogger(__name__)

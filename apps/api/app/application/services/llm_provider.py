@@ -23,35 +23,49 @@ class BaseLLMProvider:
         raise NotImplementedError()
 
 
+_logger = logging.getLogger(__name__)
+
+
 class OllamaProvider(BaseLLMProvider):
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
         self.model = model or settings.ollama_model
         self.base = base_url or settings.ollama_url.rstrip("/")
 
     def _embed(self, text: str) -> list[float]:
+        dim = settings.embedding_dim
         url = f"{self.base}/api/embed"
         payload = {"model": self.model, "input": text}
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
         data = resp.json()
+        raw: list[float] = []
         # Ollama /api/embed returns {"model":"...", "embeddings":[[...]]} for single input
         embeddings = data.get("embeddings")
         if isinstance(embeddings, list) and len(embeddings) > 0:
             first = embeddings[0]
             if isinstance(first, list):
-                return normalize(list(map(float, first)))
-            return normalize(list(map(float, embeddings)))
-        # Fallback for older /api/embeddings format: {"embedding": [...]}
-        emb = data.get("embedding")
-        if isinstance(emb, list):
-            return normalize(list(map(float, emb)))
-        raise ValueError("Unexpected embed response from ollama")
+                raw = list(map(float, first))
+            else:
+                raw = list(map(float, embeddings))
+        else:
+            # Fallback for older /api/embeddings format: {"embedding": [...]}
+            emb = data.get("embedding")
+            if isinstance(emb, list):
+                raw = list(map(float, emb))
+            else:
+                raise ValueError("Unexpected embed response from ollama")
+        # Ensure the vector matches the configured dimension
+        if len(raw) < dim:
+            raw.extend([0.0] * (dim - len(raw)))
+        elif len(raw) > dim:
+            raw = raw[:dim]
+        return normalize(raw)
 
     def embed_text(self, text: str) -> list[float]:
         try:
             return self._embed(text)
-        except Exception:
-            # fallback to deterministic local embed
+        except Exception as exc:
+            _logger.warning("Ollama embed failed (%s), falling back to deterministic embed", exc)
             return AIService().embed_text(text)
 
     def analyze_review(self, review_text: str, rating: int) -> ReviewAnalysis:
@@ -94,8 +108,8 @@ class OllamaProvider(BaseLLMProvider):
                 disliked = parsed.get("disliked_features") or parsed.get("disliked") or []
                 sentiment = parsed.get("sentiment") or parsed.get("tone") or "neutral"
                 return ReviewAnalysis(liked_features=list(liked), disliked_features=list(disliked), sentiment=str(sentiment), embedding=embedding)
-        except Exception:
-            pass
+        except Exception as exc:
+            _logger.warning("Ollama analyze_review failed (%s), falling back to deterministic analyzer", exc)
 
         # fallback to deterministic local analyzer
         return AIService().analyze_review(review_text, rating)
@@ -114,7 +128,8 @@ class OllamaProvider(BaseLLMProvider):
             if isinstance(out, dict) and "data" in out:
                 return "".join(item.get("content", "") for item in out["data"]) or str(out)
             return str(out)
-        except Exception:
+        except Exception as exc:
+            _logger.warning("Ollama explain_recommendation failed (%s), falling back to deterministic provider", exc)
             return AIService().explain_recommendation(game, score, group_features)
 
 
@@ -126,17 +141,30 @@ def get_llm_provider() -> BaseLLMProvider:
     if _cached_provider is not None:
         return _cached_provider
     if settings.ai_provider == "ollama":
-        # attempt to autodiscover a good model if one isn't configured
-        model = settings.ollama_model
-        if not model:
-            try:
-                model = _discover_ollama_model(settings.ollama_url)
-                if model:
-                    logging.getLogger("llm_provider").info("auto-selected ollama model: %s", model)
-            except Exception:
-                # discovery failed; provider will still be created and will fallback on use
-                model = None
-        _cached_provider = OllamaProvider(model=model)
+        # Check if Ollama is actually reachable before using it
+        ollama_reachable = False
+        try:
+            resp = requests.get(f"{settings.ollama_url.rstrip('/')}/api/tags", timeout=3)
+            resp.raise_for_status()
+            ollama_reachable = True
+        except Exception:
+            _logger.warning(
+                "Ollama at %s is not reachable; falling back to deterministic AIService",
+                settings.ollama_url,
+            )
+
+        if ollama_reachable:
+            model = settings.ollama_model
+            if not model:
+                try:
+                    model = _discover_ollama_model(settings.ollama_url)
+                    if model:
+                        _logger.info("auto-selected ollama model: %s", model)
+                except Exception:
+                    model = None
+            _cached_provider = OllamaProvider(model=model)
+        else:
+            _cached_provider = AIService()
     else:
         _cached_provider = AIService()
     return _cached_provider

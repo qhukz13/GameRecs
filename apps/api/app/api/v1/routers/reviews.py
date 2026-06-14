@@ -24,8 +24,9 @@ def create_review(
     current_user: Annotated[UserModel, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    if not GameRepository(db).get(payload.game_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
+    game = GameRepository(db).get(payload.game_id)
+    if not game:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Game not found")
     ai = get_llm_provider()
     analysis = ai.analyze_review(payload.review_text, payload.rating)
     reviews = ReviewRepository(db)

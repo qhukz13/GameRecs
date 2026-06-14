@@ -1,3 +1,5 @@
+import logging
+
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -5,6 +7,8 @@ from sqlalchemy.orm import Session
 import requests
 
 from pydantic import BaseModel
+
+_log = logging.getLogger(__name__)
 
 from app.api import deps
 from app.application.services.recommendation_service import _parse_steam_release_date
@@ -60,6 +64,8 @@ def steam_import(
             params={"appids": sid, "cc": "us", "l": "en"},
             timeout=6,
         )
+        
+        # Ensure proper indentation for the closing parenthesis
         r.raise_for_status()
         payload = r.json().get(sid, {})
         data = payload.get("data")
@@ -73,8 +79,17 @@ def steam_import(
         ai = get_llm_provider()
         embedding = ai.embed_text(" ".join([title, desc, *genres, *tags]))
         release_date = _parse_steam_release_date(data.get("release_date", {}))
+        
+        # Pass release_date to GameRepository.create
 
         repo = GameRepository(db)
+
+        # If the game was already imported, return the existing one (idempotent)
+        existing = repo.find_by_external_id(f"steam:{sid}")
+        if existing:
+            db.commit()
+            return GameRead.model_validate(existing)
+
         created = repo.create(
             external_id=f"steam:{sid}",
             title=title,
@@ -87,8 +102,12 @@ def steam_import(
             release_date=release_date,
         )
         db.commit()
-        return GameRead.from_orm(created)
+        return GameRead.model_validate(created)
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to import from Steam")
+    except Exception as exc:
+        _log.exception("Steam import failed for sid=%s", sid)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to import from Steam: {exc}",
+        )

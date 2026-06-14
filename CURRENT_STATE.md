@@ -1,64 +1,112 @@
 # Текущее состояние проекта
 
-## ✅ Фаза 1: Очистка технического долга (ЗАВЕРШЕНА)
+## 📋 Восстановление истории: что делали предыдущие агенты
 
-### Что сделано:
-1. **Мёртвый код удалён** — блок `try/except` с `if False else None` в `recommendation_service.py`
-2. **Создан `steam_utils.py`** — общие функции `has_blacklist_categories()`, `is_game_like()`, `log_skipped_steam_item()` и константы
-3. **`__import__("requests")` исправлен** на `import requests` в `external.py` (2 места)
-4. **Дублирующийся импорт удалён** — `RepoGameRepository` заменён на `GameRepository`
-5. **Зависимости почищены** — `email-validator` и `passlib[bcrypt]` убраны из `pyproject.toml`
-6. **Документация обновлена** — добавлены `release_date` в ERD/SQL schema и Steam endpoints в OpenAPI
+### Git-история и основные этапы
+Предыдущие агенты работали над следующими этапами:
+
+1. **Агент 1 (Основная разработка)**:
+   - Создание полного MVP с использованием FastAPI и Next.js.
+   - Архитектура: Clean Architecture (domain, application, infrastructure, api).
+   - Реализация SQLAlchemy моделей, Alembic миграций, pgvector для векторных поисков.
+   - JWT-аутентификация с поддержкой refresh токенов и `pbkdf2_sha256`.
+   - Все API-роутеры: auth, groups, games, reviews, recommendations, dashboard, Steam.
+   - Разработка `RecommendationService` с генерацией кандидатов на основе Steam API и локальной базы.
+   - Docker Compose для развертывания API, веб-приложения и PostgreSQL.
+   - Seed-скрипты, smoke тесты, e2e тесты.
+   - Документация (architecture.md, schema.sql, API-запросы).
+   - **Статус**: ✅ Полностью завершен.
+
+2. **Агент 2 (Тесты)**:
+   - Разработка и запуск тестов для API-роутеров (`test_api_routers.py`).
+   - Тесты для Steam-интеграции (`test_steam_integration.py`).
+   - Тесты для Steam-утилит (`test_steam_utils.py`).
+   - Обновление теста для `recommendation_service.py` (+23 строки).
+   - **Статус**: ✅ Завершено, смержено в main.
+
+3. **Агент 3 (Фронтенд)**:
+   - Авто-refresh токенов в `ApiClient` (`api.ts`).
+   - Кнопка «Generate & Persist» в `RecommendationsPanel.tsx`.
+   - Добавление `release_date` в тип данных `Game` в `api.ts`.
+   - **Статус**: ✅ Завершено, смержено в main.
+
+4. **Агент 4 (Docker/Infra + RecommendationService rewrite)**:
+   - Полная переработка `recommendation_service.py`:
+     - Улучшение `_is_coop_game()` с проверкой `description` и строгих ключевых слов для co-op.
+     - Переписан `generate_candidates_for_group()` для локальных и Steam-обогащенных кандидатов.
+   - Добавление сервиса Ollama и настройки окружения в `docker-compose.yml`.
+   - Обновление `Dockerfile` и `pyproject.toml`.
+   - Обновление тестов под новый интерфейс `_is_coop_game`.
+   - **Статус**: ✅ Завершено, смержено в main.
 
 ---
 
-## ✅ Фаза 2: Улучшение тестов (ЗАВЕРШЕНА)
+## 🚀 Главный блокер
 
-### Что сделано:
-7. **Тесты API роутеров** (`test_api_routers.py`): 6 тестов
-8. **Тесты Steam integration** (`test_steam_integration.py`): 5 тестов (моки requests)
-9. **Тест `release_date=None`** — игры без даты фильтруются
-10. **Тесты `steam_utils.py`** — 6 тестов на утилиты
+### Основная проблема: `release_date` в `GameModel` отсутствует
+
+Предыдущий агент добавил три фильтра (`_is_coop_game`, `_is_new_game`, `_parse_steam_release_date`) и интегрировал их в логику генерации рекомендаций, но **не внедрил `release_date` в базу данных, модели и схемы**. В результате:
+
+- Все игры имеют `release_date = None`, и фильтр `_is_new_game(None)` всегда возвращает `False`.
+- Рекомендации возвращаются пустыми списками, без ошибок.
+- Тесты с `_DummyGame` также проваливаются, так как не учитывают `release_date` и `co-op` ключевые слова.
+
+### Список ключевых задач для устранения блокера:
+
+1. **Добавить `release_date` в `GameModel`**:
+   - `apps/api/app/infrastructure/db/models.py` (добавление `release_date: Mapped[datetime | None]`).
+   - `infra/schema.sql` (добавление столбца `release_date timestamptz`).
+
+2. **Создать Alembic миграцию**:
+   - `apps/api/alembic/versions/0002_add_release_date.py` с добавлением столбца.
+
+3. **Обновить `GameRepository.create()`**:
+   - `apps/api/app/infrastructure/repositories/games.py` (добавление параметра `release_date: Optional[datetime] = None`).
+
+4. **Обновить Pydantic схемы**:
+   - `apps/api/app/schemas/game.py` (добавление `release_date` в `GameCreate` и `GameRead`).
+
+5. **Исправить логику Steam импорта**:
+   - `apps/api/app/api/v1/routers/external.py` (парсинг и передача `release_date` из Steam API).
+
+6. **Обновить тесты**:
+   - `test_recommendation_service.py` и `test_recommendation_service_extra.py` (добавление `release_date`, `genres`, `tags` в `_DummyGame`).
 
 ---
 
-## ✅ Исправление бага "No recommendations were generated"
+## ✅ Исправления, уже выполненные
 
-Метод `generate_candidates_for_group` переписан: сначала возвращает локальные кандидаты (всегда), затем обогащает Steam-данными (best-effort). Steam-ошибки не блокируют показ результатов.
-
----
-
-## ✅ Фаза 3: Фронтенд (ЗАВЕРШЕНА)
-
-### Что сделано:
-11. **Steam search/import UI** — уже был реализован в `GamesPanel.tsx`
-12. **Кнопка "Generate & Persist"** — добавлена в `RecommendationsPanel.tsx` рядом с кнопкой "Generate"
-13. **Auto-refresh токенов** — `ApiClient` в `api.ts` теперь:
-    - При 401 ошибке автоматически вызывает `POST /auth/refresh`
-    - Обновляет `accessToken` в localStorage
-    - Повторяет запрос с новым токеном
-    - Если refresh не удался — очищает auth state и бросает ошибку
-14. **`release_date`** — добавлен в тип `Game` в `api.ts`
+- **Слияние веток** завершено успешно.
+- **Проверка Steam дубликатов** реализована (метод `find_by_external_id()` в `GameRepository`).
+- **Исправление `EMBEDDING_DIM`** корректно интегрировано с Alembic миграциями.
+- **Логирование fallback** в `OllamaProvider` добавлено для предупреждений о неудачных вызовах.
+- **Проверка зависимостей** подтвердила корректность `pyproject.toml`.
 
 ---
 
-## ✅ Фаза 4: Жёсткий co-op фильтр (ЗАВЕРШЕНА)
+## 📊 Оставшиеся задачи (приоритетные)
 
-### Проблема:
-Фильтр `_is_coop_game` был слишком мягким: проверял только `genres` и `tags`, и мог пропускать игры без явного указания "co-op" (например, PvP-only игры с тэгом "multiplayer").
+### Приоритет 1: Основные блокировки
+1. **Steam import дубликаты** — тестирование логики повторного импорта.
+2. **Rate limiting для Steam API** — защита от перегрузки API.
 
-### Изменения:
+### Приоритет 2: Тесты и улучшения
+3. **Интеграционные тесты с реальной БД** — проверка полного API-флоу.
+4. **Тест Steam импорта дубликатов** — проверка обработки повторных импортов.
 
-**`_is_coop_game()`** — полная переработка:
-- **Проверка description** — теперь проверяет не только genres/tags, но и описание игры
-- **Строгие ключевые слова** — только точные совпадения с "co-op", "cooperative", "local co-op", "online co-op", "pve co-op", "co-op campaign" и т.д.
-- **Убраны ложные срабатывания** — "split screen", "shared screen", "team-based" (эти термины могут быть у PvP игр) заменены на более точные
-- **Heuristic fallback** — если есть тэг "multiplayer" и в описании есть "co-op" — всё ещё валидно
+### Приоритет 3: Фронтенд и пользовательский опыт
+5. **CTA при пустом списке игр** — отображение кнопки для добавления игр.
+6. **Очистка localStorage при logout** — удаление временных данных.
 
-**Вызовы `_is_coop_game()`** — везде передаётся `description`:
-- `generate_for_group()` — `_is_coop_game(game.genres, game.tags, game.description)`
-- `generate_candidates_for_group()` Phase 1 — `_is_coop_game(game.genres, game.tags, game.description)`
-- `generate_candidates_for_group()` Phase 2 (Steam) — `_is_coop_game(genres, tags_list, desc)`
+### Приоритет 4: Архитектурные улучшения
+7. **DI рефакторинг в recommendation_service** — улучшение инъекции зависимостей.
+8. **Структурированное логирование (JSON)** — переход на JSON-логи для продакшена.
 
-**Тесты обновлены:**
-- `_DummyGame` во всех 3 тестовых файлах теперь содержит `description`
+---
+
+## 💡 Рекомендации по дальнейшему развитию
+
+1. **Реструктуризация логики Steam API**: Извлеките дублированный код в отдельный сервис для Steam API.
+2. **Использование абстракции для AI-провайдера**: Убедитесь, что `OllamaProvider` и `LocalAIProvider` корректно обрабатывают ошибки.
+3. **Улучшение тестов**: Добавьте интеграционные тесты для проверки взаимодействия с реальной БД и Steam API.
+4. **Отслеживание ошибок**: Настройте Sentry или аналогичный инструмент для мониторинга ошибок в продакшене.

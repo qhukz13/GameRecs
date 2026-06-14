@@ -1,33 +1,33 @@
+version: "3.9"
+
 services:
 
   postgres:
     image: pgvector/pgvector:pg16
+    container_name: game_recs_postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-game_recs}
-      POSTGRES_USER: ${POSTGRES_USER:-app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: game_recs
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-game_recs}"]
+      test: ["CMD-SHELL", "pg_isready -U app -d game_recs"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-
   ollama:
     image: ollama/ollama:latest
+    container_name: game_recs_ollama
     ports:
       - "11434:11434"
-
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
-
     volumes:
       - ollama_data:/root/.ollama
-
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -35,18 +35,19 @@ services:
       retries: 20
       start_period: 20s
 
-
   api:
     build:
       context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: game_recs_api
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:app@postgres:5432/game_recs}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-me}
+      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/game_recs
+      JWT_SECRET_KEY: dev-secret-change-me
       CORS_ORIGINS: '["http://localhost:3000"]'
       AI_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: nomic-embed-text
-      EMBEDDING_DIM: 768
+      EMBEDDING_DIM: 8
     ports:
       - "8000:8000"
     depends_on:
@@ -54,27 +55,33 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+    # ВАЖНО: dev режим через volume
     volumes:
       - ./apps/api:/app
 
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   web:
     build:
       context: ./apps/web
+    container_name: game_recs_web
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
     ports:
       - "3000:3000"
     depends_on:
       - api
+
     command: npm run dev
+
     volumes:
       - ./apps/web:/app
       - web_node_modules:/app/node_modules
 
-
 volumes:
   postgres_data:
-  web_node_modules:
   ollama_data:
+  web_node_modules:

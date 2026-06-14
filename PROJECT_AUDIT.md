@@ -22,189 +22,117 @@
 
 ---
 
-## 2. Что уже реализовано
+## 2. Что реализовано (фазы 1–4 завершены)
 
-### Backend (`apps/api`)
+### Фаза 1: Очистка технического долга ✅
+1. Удалён мёртвый код (`if False else None`) в `recommendation_service.py`
+2. Создан `steam_utils.py` — общие функции и константы
+3. `__import__("requests")` заменён на `import requests`
+4. Дублирующийся импорт `RepoGameRepository` убран
+5. Неиспользуемые зависимости (`email-validator`, `passlib[bcrypt]`) удалены из `pyproject.toml`
+6. Документация обновлена (`release_date` в ERD, Steam endpoints в OpenAPI)
 
-**API роутеры (`/api/v1`):**
+### Фаза 2: Улучшение тестов ✅
+7. Тесты API роутеров (`test_api_routers.py`): 6 тестов
+8. Тесты Steam integration (`test_steam_integration.py`): 5 тестов с моками
+9. Тест `release_date=None` — игры без даты фильтруются
+10. Тесты `steam_utils.py`: 6 тестов
 
-| Роутер | Методы | Статус |
-|---|---|---|
-| `/auth` | `POST /register`, `POST /login`, `POST /refresh`, `GET /me` | ✅ Реализовано |
-| `/groups` | `POST /`, `GET /`, `GET /{id}`, `POST /{id}/invite`, `DELETE /{id}` | ✅ Реализовано |
-| `/games` | `POST /`, `GET /`, `GET /{id}`, `GET /{id}/reviews`, `DELETE /{id}` | ✅ Реализовано |
-| `/reviews` | `POST /`, `GET /me`, `GET /games/{id}`, `DELETE /{id}` | ✅ Реализовано |
-| `/dashboard` | `GET /` | ✅ Реализовано |
-| `/external` | `GET /steam/search`, `POST /steam/import` | ✅ Реализовано |
-| `/groups/{id}/recommendations` | `POST /generate`, `GET /`, `DELETE /` | ✅ Реализовано |
+### Исправление бага "No recommendations were generated" ✅
+- `generate_candidates_for_group` переписан: сначала локальные кандидаты, затем best-effort Steam-обогащение
 
-**Сервисы:**
-- `AuthService` — регистрация, логин, refresh токенов
-- `AIService` — детерминированный AI: эмбеддинги по частоте слов в словаре, анализ отзывов, объяснение рекомендаций
-- `OllamaProvider` — обёртка для вызова Ollama API с fallback на `AIService`
-- `ProfileService` — обновление профиля пользователя и группы (усреднение эмбеддингов)
-- `RecommendationService` — генерация рекомендаций: поиск похожих игр в локальной БД + интеграция со Steam
+### Фаза 3: Фронтенд ✅
+11. Steam search/import UI в `GamesPanel.tsx`
+12. Кнопка "Generate & Persist" в `RecommendationsPanel.tsx`
+13. Auto-refresh токенов в `ApiClient` (401 → refresh → retry)
+14. `release_date` добавлен в тип `Game`
 
-**Инфраструктура:**
-- SQLAlchemy модели: `UserModel`, `RefreshTokenModel`, `GroupModel`, `GroupMemberModel`, `GameModel`, `ReviewModel`, `RecommendationModel`
-- Репозитории: `UserRepository`, `RefreshTokenRepository`, `GroupRepository`, `GameRepository`, `ReviewRepository`, `RecommendationRepository`
-- pgvector: `cosine_distance` для similarity search, `ivfflat` индекс
-- Alembic миграции (2 версии: базовая + `release_date`)
-- Seed script (`scripts/seed.py`)
-
-**Безопасность:**
-- JWT access tokens (30 мин) + refresh tokens (30 дней)
-- Хеширование паролей через pbkdf2_sha256
-- Хеширование refresh токенов в БД
-
-### Frontend (`apps/web`)
-
-- `app/layout.tsx` — корневой layout с ToastProvider
-- `app/page.tsx` — рендерит DashboardShell
-- `features/dashboard/DashboardShell.tsx` — главная страница с секциями:
-  - AuthPanel (логин/регистрация)
-  - GroupsPanel (список групп)
-  - GamesPanel (список игр)
-  - ReviewPanel (отзывы)
-  - RecommendationsPanel (рекомендации с генерацией)
-- `lib/api.ts` — ApiClient для HTTP запросов
-- `components/ui/` — базовые UI компоненты (Button, Card, Badge, Toast, ConfirmDialog)
-
-### Инфраструктура
-
-- `docker-compose.yml` — API + Web + PostgreSQL (с pgvector)
-- `Dockerfile` для api и web
-- `.env.example`
-- `infra/schema.sql` — standalone SQL схема
-- `scripts/e2e_api_check.py`, `scripts/smoke_test.py` — скрипты проверки
+### Фаза 4: Жёсткий co-op фильтр ✅
+15. `_is_coop_game()` переработан: проверка description, строгие ключевые слова, убраны ложные срабатывания
 
 ---
 
-## 3. Незавершённые части
+## 3. Оставшиеся проблемы
 
 ### Backend
 
-| Компонент | Проблема |
-|---|---|
-| `recommendation_service.py` | Метод `generate_for_group` содержит мёртвый код (строки 94-96: `if False else None`). |
-| `recommendation_service.py` | Дублирование функций `_has_blacklist`, `_is_game_like`, констант `BLACKLIST_CATS`, `GAME_KEYWORDS` в `generate_for_group` и `generate_candidates_for_group`. |
-| `recommendation_service.py` | Логика Steam-импорта в `generate_for_group` запутанная: создаёт игры в БД, но затем просто делает `search_similar` по локальной БД (перезаписывая `candidates`). |
-| `llm_provider.py` | Паттерн fallback (Ollama → AIService) молча скрывает ошибки сети/конфигурации. |
-| `external.py` | Steam import не проверяет дубликаты (`external_id` unique constraint может выбросить исключение). |
-| Архитектура | В `recommendation_service.py` импортируется `requests` и `get_llm_provider` напрямую, а не через DI — смешение уровней. |
-| Архитектура | `GameRepository` в `recommendation_service.py` импортируется дважды: как `GameRepository` и как `RepoGameRepository`. |
+| # | Компонент | Проблема | Приоритет |
+|---|-----------|----------|-----------|
+| B1 | `llm_provider.py` | Паттерн fallback (Ollama → AIService) молча скрывает ошибки сети/конфигурации — нет логирования ошибок при fallback | Средний |
+| B2 | `external.py` | Steam import не проверяет дубликаты по `external_id` до INSERT — unique constraint может выбросить необработанное исключение | Высокий |
+| B3 | `recommendation_service.py` | Прямые импорты `requests` и `get_llm_provider` смешивают уровни архитектуры (нарушение DI) | Низкий |
+| B4 | `external.py` | Нет rate limiting / таймаутов для вызовов Steam API | Средний |
+| B5 | Steam import | Нет логирования успешного импорта (только логирование skip) | Низкий |
 
 ### Frontend
 
-| Компонент | Проблема |
-|---|---|
-| `DashboardShell.tsx` | Нет выбора игры при загрузке, если список игр пуст — `selectedGameId` остаётся `null`. |
-| `RecommendationsPanel.tsx` | Нет кнопки "Generate & Persist" (с `persist=true`), хотя API поддерживает. |
-| Steam UI | Нет UI для `/external/steam/search` и `/external/steam/import` — только API-эндпоинты. |
-| Токены | Refresh token хранится в localStorage, но никогда не используется для автоматического обновления — по истечении access token пользователь должен перелогиниться. |
-| Типы | `Game` в `api.ts` не содержит `release_date`. |
-
-### Документация
-
-| Файл | Проблема |
-|---|---|
-| `docs/architecture.md` | SQL-схема в документации не включает колонку `release_date` для таблицы `games` (хотя реальная schema.sql и модель БД содержат). |
-| `docs/architecture.md` | Не описаны эндпоинты `/external/steam/search`, `/external/steam/import`. |
+| # | Компонент | Проблема | Приоритет |
+|---|-----------|----------|-----------|
+| F1 | `DashboardShell.tsx` | Если список игр пуст — `selectedGameId` остаётся `null`, нет UX-подсказки | Средний |
+| F2 | `DashboardShell.tsx` | Транзиентные результаты в localStorage (`transient_recs:{groupId}`) не очищаются при logout | Низкий |
+| F3 | UX | Нет индикации загрузки/пустого состояния для recommendations | Низкий |
 
 ### Тесты
 
-| Файл | Статус |
-|---|---|
-| `test_recommendation_service.py` | ✅ Есть (3 теста) — использует стабы, тестирует базовую генерацию |
-| `test_recommendation_service_extra.py` | ✅ Есть (2 теста) — пустой профиль, исключение сыгранных игр |
-| `test_ai_service.py` | ✅ Есть |
-| `test_llm_provider.py` | ✅ Есть |
-| `test_llm_provider_parse.py` | ✅ Есть |
-| `test_vector_math.py` | ✅ Есть |
-| Интеграционные тесты (БД, роутеры) | ❌ Отсутствуют |
-| Тесты репозиториев | ❌ Отсутствуют |
-| Тесты фронтенда | ❌ Отсутствуют |
+| # | Тип | Что отсутствует | Приоритет |
+|---|-----|-----------------|-----------|
+| T1 | Интеграционные | Нет тестов репозиториев (с реальной/тестовой БД) | Средний |
+| T2 | Интеграционные | Нет интеграционных тестов API через TestClient с БД | Средний |
+| T3 | Unit | Нет тестов фронтенда (нет ни одного .test.ts/.spec.ts) | Низкий |
+| T4 | Unit | Нет теста на Steam import дубликаты (когда `external_id` уже существует) | Средний |
+
+### Архитектура / Инфраструктура
+
+| # | Область | Проблема | Приоритет |
+|---|---------|----------|-----------|
+| A1 | DI | `recommendation_service.py` создаёт/импортирует зависимости напрямую вместо получения через FastAPI Depends | Низкий |
+| A2 | Embedding | `EMBEDDING_DIM=8` — слишком мало для продакшена, нужен миграционный путь | Низкий |
+| A3 | Логирование | Нет структурированного логирования (JSON logs) | Низкий |
 
 ---
 
-## 4. TODO и заглушки
+## 4. План действий (следующие шаги)
 
-### Код
-1. **Мёртвый код** в `recommendation_service.py` (строки 94-96):
-   ```python
-   recent_reviews = self.reviews.db.scalars(...) if False else None
-   ```
-   Блок с `if False else None` никогда не выполняется.
+### Приоритет 1: Backend Hardening (b1 — b2)
+> Срок: ~1–2 дня
 
-2. **Неиспользуемые импорты** в `recommendation_service.py`:
-   ```python
-   from app.application.services.recommendation_service import _parse_steam_release_date  # в external.py
-   ```
-   Используется, но импорт выглядит как cross-module import.
+- [ ] **B2: Проверка дубликатов Steam import** — перед `INSERT` в `external.py` проверять существование `external_id`, возвращать 409 Conflict если уже есть. Добавить тест `test_steam_import_duplicate`.
+- [ ] **B1: Логирование fallback в llm_provider** — добавить `logger.warning()` при fallback с Ollama на AIService, чтобы ошибки не терялись молча.
 
-3. **`passlib[bcrypt]`** в зависимостях не используется — код использует `pbkdf2_sha256`.
+### Приоритет 2: Тесты покрытия (t1 — t4)
+> Срок: ~2–3 дня
 
-4. **`email-validator`** в зависимостях — не видно использования в коде.
+- [ ] **T4: Тест Steam import дубликат** — проверить что повторный импорт одного и того же `external_id` корректно обрабатывается.
+- [ ] **T2: Интеграционные тесты API** — создать `test_api_integration.py` с TestClient + test DB: полный флоу register → create group → add game → create review → generate recommendations.
+- [ ] **T1: Тесты репозиториев** — тесты CRUD для `GameRepository`, `ReviewRepository`, `RecommendationRepository` через test DB.
 
-5. **`# mark these as transient so callers can detect non-persisted candidates`** — transient кандидаты без персистенции.
+### Приоритет 3: Frontend Polish (f1 — f3)
+> Срок: ~1 день
 
-6. **`logging.getLogger(__name__).info("Skipping steam:%s due to blacklist categories...")`** — логирование есть только для skip, нет для успешного импорта.
+- [ ] **F1: Пустой список игр** — показать CTA "Добавьте игру (через Steam или вручную)" когда `games.length === 0`, вместо пустого состояния.
+- [ ] **F2: Очистка localStorage при logout** — удалить `transient_recs:*` ключи при logout.
+- [ ] **F3: Индикация состояний** — skeleton/spinner при загрузке рекомендаций, пустое состояние если рекомендаций нет.
 
-### Фронтенд
-7. **Refresh token не ротируется** — в `DashboardShell.tsx` нет логики вызова `/auth/refresh`.
+### Приоритет 4: Architecture & Polish (a1 — a3, b3 — b5)
+> Срок: ~2–3 дня (можно отложить)
 
-8. **Транзиентные результаты** сохраняются в localStorage под ключом `transient_recs:{groupId}`, но никогда не очищаются при logout.
+- [ ] **B4: Rate limiting для Steam API** — добавить simple in-memory rate limiter или использовать `aiolimiter` для Steam API вызовов.
+- [ ] **B3: DI в recommendation_service** — рефакторинг: передавать зависимости через конструктор/`Depends` вместо прямых импортов.
+- [ ] **B5: Логирование Steam import** — добавить `logger.info()` при успешном импорте.
+- [ ] **A3: Структурированное логирование** — настроить JSON-формат логов для продакшена.
+- [ ] **A2: Путь к production embedding_dim** — спроектировать миграцию `vector(8)` → `vector(384)` с переимпортом данных.
 
----
+### Приоритет 5: Production Readiness (отдалённая перспектива)
 
-## 5. Ошибки сборки и тестов
-
-### Потенциальные проблемы при сборке
-| Проблема | Описание |
-|---|---|
-| `passlib[bcrypt]` vs `pbkdf2_sha256` | В зависимостях указан `passlib[bcrypt]`, но код использует `pbkdf2_sha256`. Если bcrypt не установится — ничего не сломается, но лишняя зависимость. |
-| `email-validator` | Включён в зависимости, но не используется в коде. |
-| Отсутствие `release_date` в GameRead | Может вызвать ошибки сериализации, если фронтенд ожидает поле. |
-| `http.client` import | `external.py` использует `__import__("requests")` вместо прямого импорта — нестандартный подход. |
-
-### Тесты
-- Все тесты используют стабы/mocks и не тестируют реальную БД или интеграцию.
-- Нет тестов для API роутеров (fastapi TestClient).
-- Нет тестов для Steam integration (нет моков для requests).
-- Тесты `test_recommendation_service.py` могут не покрывать случай с `release_date=None` (игра без даты).
+- [ ] Rate limiting на API endpoints (nginx/cloudflare или fastapi-limiter)
+- [ ] Prometheus метрики / health check расширение
+- [ ] CI/CD pipeline (GitHub Actions: lint → test → build → deploy)
+- [ ] HTTPS / домен для продакшена
+- [ ] Мониторинг ошибок (Sentry или аналог)
 
 ---
 
-## 6. Следующий логичный шаг разработки
-
-Предлагаемый порядок работ:
-
-### Приоритет 1: Очистка кода (технический долг)
-1. Удалить мёртвый код в `recommendation_service.py` (строки 94-96)
-2. Вынести дублирующиеся функции (`_has_blacklist`, `_is_game_like`, константы) из `recommendation_service.py` в общие утилиты
-3. Исправить импорты: `__import__("requests")` → `import requests`
-4. Удалить неиспользуемые зависимости из `pyproject.toml` (или добавить `email-validator` в валидацию)
-5. Обновить `docs/architecture.md`: добавить `release_date`, описать Steam endpoints
-
-### Приоритет 2: Улучшение тестов
-6. Добавить тесты для API роутеров с `TestClient`
-7. Добавить тесты для Steam integration (моки requests)
-8. Добавить тесты для репозиториев (с тестовой БД)
-9. Добавить тест на `release_date=None` в recommendation service
-
-### Приоритет 3: Фронтенд
-10. Добавить UI для Steam search/import (поле поиска, список результатов, кнопка импорта)
-11. Добавить кнопку "Generate & Persist" в RecommendationsPanel
-12. Реализовать автоматический refresh токена при 401 ошибке в ApiClient
-
-### Приоритет 4: Функциональность
-13. Исправить Steam import: проверять дубликаты по `external_id` до создания
-14. Улучшить обработку ошибок Steam API (rate limiting, таймауты)
-15. Рассмотреть увеличение `embedding_dim` с 8 до большего значения для продакшена
-
----
-
-## Структура проекта (сводка)
+## 5. Структура проекта
 
 ```
 ├── apps/
@@ -212,12 +140,12 @@
 │   │   ├── alembic/                # Миграции БД
 │   │   ├── app/
 │   │   │   ├── api/v1/routers/     # Роутеры (auth, games, groups, reviews, recommendations, dashboard, external)
-│   │   │   ├── application/services/ # Бизнес-логика (AI, auth, profile, recommendation, vector_math, llm_provider)
+│   │   │   ├── application/services/ # Бизнес-логика (AI, auth, profile, recommendation, vector_math, llm_provider, steam_utils)
 │   │   │   ├── core/               # Конфиг, security (JWT, password)
 │   │   │   ├── domain/             # Entity (dataclass: ReviewAnalysis, SimilarGame)
 │   │   │   ├── infrastructure/     # DB models, repositories, session
 │   │   │   ├── schemas/            # Pydantic схемы
-│   │   │   └── tests/              # Unit тесты (6 файлов)
+│   │   │   └── tests/              # Unit тесты
 │   │   └── scripts/seed.py
 │   └── web/                        # Next.js frontend
 │       ├── app/                    # Layout, pages
@@ -228,6 +156,3 @@
 ├── infra/schema.sql                # SQL схема
 ├── docker-compose.yml
 └── scripts/                        # Smoke/e2e тесты
-```
-
-**Всего файлов исходного кода (без node_modules):** ~60 файлов с кодом, ~6 тестовых файлов.
