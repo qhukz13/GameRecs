@@ -1,8 +1,8 @@
-import * as React from "react";
+import ComponentPropsWithoutRef from "react"
 
 import { cn } from "@/lib/utils";
 
-export function Badge({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
+export function Badge({ className, ...props }: React.ComponentPropsWithoutRef<"span">) {
   return (
     <span
       className={cn(
