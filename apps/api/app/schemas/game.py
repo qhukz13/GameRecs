@@ -13,6 +13,7 @@ class GameCreate(BaseModel):
     players_min: int = Field(ge=1)
     players_max: int = Field(ge=1)
     release_date: datetime | None = None
+    group_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_players(self) -> "GameCreate":

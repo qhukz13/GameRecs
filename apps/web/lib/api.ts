@@ -46,6 +46,7 @@ export type Recommendation = {
   explanation: string;
   created_at: string;
   game: Game;
+  transient?: boolean;
 };
 
 export type Dashboard = {

@@ -1,3 +1,4 @@
+from app.infrastructure.db.models import GameModel
 from uuid import UUID
 
 from sqlalchemy import select
@@ -70,4 +71,22 @@ class GroupRepository:
         # deleting the group will cascade to members and recommendations via DB FKs
         self.db.delete(group)
         self.db.flush()
+
+    def add_game(self, group_id: UUID, game_id: UUID) -> None:
+        from app.infrastructure.db.models import GroupGameModel
+        existing = self.db.get(GroupGameModel, {"group_id": group_id, "game_id": game_id})
+        if not existing:
+            group_game = GroupGameModel(group_id=group_id, game_id=game_id)
+            self.db.add(group_game)
+            self.db.flush()
+
+    def list_games(self, group_id: UUID) -> list["GameModel"]:
+        from app.infrastructure.db.models import GroupGameModel, GameModel
+        stmt = (
+            select(GameModel)
+            .join(GroupGameModel, GroupGameModel.game_id == GameModel.id)
+            .where(GroupGameModel.group_id == group_id)
+            .order_by(GameModel.title.asc())
+        )
+        return list(self.db.scalars(stmt))
 

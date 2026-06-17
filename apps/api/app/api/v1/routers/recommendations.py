@@ -18,6 +18,7 @@ from app.infrastructure.repositories.recommendations import RecommendationReposi
 from app.infrastructure.repositories.reviews import ReviewRepository
 from app.infrastructure.repositories.users import UserRepository
 from app.schemas.recommendation import RecommendationRead
+from app.schemas.game import GameRead
 
 router = APIRouter()
 import logging
@@ -44,7 +45,7 @@ def generate_recommendations(
         reviews=reviews,
         recommendations=RecommendationRepository(db),
         profiles=ProfileService(UserRepository(db), groups, reviews),
-    ai=get_llm_provider(),
+        ai=get_llm_provider(),
     )
     if not persist:
         # generate candidates without persisting
@@ -69,7 +70,7 @@ def generate_recommendations(
                 "score": float(r.score),
                 "explanation": r.explanation,
                 "created_at": r.created_at.isoformat(),
-                "game": jsonable_encoder(r.game),
+                "game": jsonable_encoder(GameRead.model_validate(r.game)),
             }
         )
     return JSONResponse(content=out)

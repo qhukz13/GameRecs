@@ -20,6 +20,7 @@ app/application/services/auth_service.py
 app/application/services/llm_provider.py
 app/application/services/profile_service.py
 app/application/services/recommendation_service.py
+app/application/services/steam_parsing.py
 app/application/services/steam_utils.py
 app/application/services/vector_math.py
 app/core/config.py
@@ -45,12 +46,15 @@ app/schemas/group.py
 app/schemas/recommendation.py
 app/schemas/review.py
 app/schemas/user.py
+app/tests/conftest.py
 app/tests/test_ai_service.py
+app/tests/test_api_integration.py
 app/tests/test_api_routers.py
 app/tests/test_llm_provider.py
 app/tests/test_llm_provider_parse.py
 app/tests/test_recommendation_service.py
 app/tests/test_recommendation_service_extra.py
+app/tests/test_repository_crud.py
 app/tests/test_steam_integration.py
 app/tests/test_steam_utils.py
 app/tests/test_vector_math.py

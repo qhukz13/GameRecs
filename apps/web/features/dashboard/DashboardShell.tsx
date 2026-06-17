@@ -1,7 +1,7 @@
 "use client";
 
 import { RefreshCw, Shield, SquareChevronRight } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 
 import { AuthPanel } from "@/features/auth/AuthPanel";
 import { GamesPanel } from "@/features/games/GamesPanel";
@@ -17,6 +17,7 @@ export function DashboardShell() {
   const [user, setUser] = useState<User | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [games, setGames] = useState<Game[]>([]);
+  const [groupGames, setGroupGames] = useState<Game[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -26,7 +27,10 @@ export function DashboardShell() {
   const api = useMemo(() => new ApiClient(accessToken), [accessToken]);
   const selectedGame = games.find((game) => game.id === selectedGameId) ?? null;
 
-  const load = useCallback(async () => {
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const prevGroupIdRef = useRef<string | null>(null);
+
+  const loadInitial = useCallback(async () => {
     if (!accessToken) return;
     setError(null);
     try {
@@ -35,19 +39,46 @@ export function DashboardShell() {
         api.request<Game[]>("/games")
       ]);
       setGroups(dashboard.groups);
-      setReviews(dashboard.recent_reviews);
-      setRecommendations(
-        selectedGroupId
-          ? await api.request<Recommendation[]>(`/groups/${selectedGroupId}/recommendations`)
-          : dashboard.recommendations
-      );
       setGames(gameList);
-      if (!selectedGroupId && dashboard.groups[0]) setSelectedGroupId(dashboard.groups[0].id);
-      if (!selectedGameId && gameList[0]) setSelectedGameId(gameList[0].id);
+      
+      if (dashboard.groups[0] && !selectedGroupId) {
+        setSelectedGroupId(dashboard.groups[0].id);
+      }
+      if (gameList[0] && !selectedGameId) {
+        setSelectedGameId(gameList[0].id);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load dashboard");
     }
-  }, [accessToken, api, selectedGameId, selectedGroupId]);
+  }, [accessToken, api, refreshTrigger]);
+
+  const loadGroupData = useCallback(async () => {
+    if (!accessToken || !selectedGroupId) return;
+    setError(null);
+    try {
+      const [groupReviews, groupRecs, groupGamesList] = await Promise.all([
+        api.request<Review[]>(`/groups/${selectedGroupId}/reviews`),
+        api.request<Recommendation[]>(`/groups/${selectedGroupId}/recommendations`),
+        api.request<Game[]>(`/groups/${selectedGroupId}/games`)
+      ]);
+      setReviews(groupReviews);
+      setRecommendations(groupRecs);
+      setGroupGames(groupGamesList);
+      
+      if (selectedGroupId !== prevGroupIdRef.current) {
+        prevGroupIdRef.current = selectedGroupId;
+        if (groupReviews.length > 0) {
+          setSelectedGameId(groupReviews[0].game_id);
+        } else if (groupGamesList.length > 0) {
+          setSelectedGameId(groupGamesList[0].id);
+        } else {
+          setSelectedGameId(null);
+        }
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load group data");
+    }
+  }, [accessToken, api, selectedGroupId, refreshTrigger]);
 
   useEffect(() => {
     const savedToken = window.localStorage.getItem("accessToken");
@@ -59,8 +90,16 @@ export function DashboardShell() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadInitial();
+  }, [loadInitial]);
+
+  useEffect(() => {
+    void loadGroupData();
+  }, [loadGroupData]);
+
+  const refresh = useCallback(() => {
+    setRefreshTrigger((prev) => prev + 1);
+  }, []);
 
   function authenticated(token: string, refreshToken: string, nextUser: User) {
     window.localStorage.setItem("accessToken", token);
@@ -78,6 +117,8 @@ export function DashboardShell() {
     setGames([]);
     setReviews([]);
     setRecommendations([]);
+    setSelectedGroupId(null);
+    setSelectedGameId(null);
   }
 
   if (!accessToken || !user) {
@@ -103,7 +144,7 @@ export function DashboardShell() {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => void load()} title="Refresh">
+            <Button variant="outline" onClick={refresh} title="Refresh">
               <RefreshCw className="h-4 w-4" />
               Refresh
             </Button>
@@ -122,35 +163,34 @@ export function DashboardShell() {
             groups={groups}
             selectedGroupId={selectedGroupId}
             onSelectGroup={setSelectedGroupId}
-            onChanged={() => void load()}
+            onChanged={refresh}
             onError={setError}
           />
           <ReviewPanel
             api={api}
             selectedGame={selectedGame}
             reviews={reviews}
-            onChanged={() => void load()}
+            onChanged={refresh}
             onError={setError}
+            selectedGroupId={selectedGroupId}
           />
         </div>
         <GamesPanel
           api={api}
-          games={games}
+          games={groupGames}
           selectedGameId={selectedGameId}
           onSelectGame={setSelectedGameId}
-          onChanged={() => void load()}
+          onChanged={refresh}
           onError={setError}
+          reviews={reviews}
+          selectedGroupId={selectedGroupId}
         />
         <RecommendationsPanel
           api={api}
           selectedGroupId={selectedGroupId}
           recommendations={recommendations}
-          onChanged={() => void load()}
+          onChanged={refresh}
           onError={setError}
-          onTransientGenerated={(items: Recommendation[]) => {
-            // temporarily show transient results in parent state so children can't be overwritten
-            setRecommendations(items);
-          }}
         />
       </section>
 

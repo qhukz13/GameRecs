@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.infrastructure.db.models import GroupMemberModel, ReviewModel
+from app.infrastructure.db.models import ReviewModel
 
 
 class ReviewRepository:
@@ -71,6 +71,19 @@ class ReviewRepository:
             query = query.limit(limit)
         return list(self.db.scalars(query))
 
+    def list_for_group(self, group_id: UUID, limit: int | None = None) -> list[ReviewModel]:
+        from app.infrastructure.db.models import GroupGameModel
+        query = (
+            select(ReviewModel)
+            .options(joinedload(ReviewModel.game))
+            .join(GroupGameModel, GroupGameModel.game_id == ReviewModel.game_id)
+            .where(GroupGameModel.group_id == group_id)
+            .order_by(ReviewModel.created_at.desc())
+        )
+        if limit:
+            query = query.limit(limit)
+        return list(self.db.scalars(query))
+
     def list_for_game(self, game_id: UUID) -> list[ReviewModel]:
         return list(
             self.db.scalars(
@@ -90,10 +103,11 @@ class ReviewRepository:
         return [list(review.review_embedding) for review in reviews]
 
     def played_game_ids_for_group(self, group_id: UUID) -> set[UUID]:
+        from app.infrastructure.db.models import GroupGameModel
         rows = self.db.scalars(
             select(ReviewModel.game_id)
-            .join(GroupMemberModel, GroupMemberModel.user_id == ReviewModel.user_id)
-            .where(GroupMemberModel.group_id == group_id)
+            .join(GroupGameModel, GroupGameModel.game_id == ReviewModel.game_id)
+            .where(GroupGameModel.group_id == group_id)
         )
         return set(rows)
 

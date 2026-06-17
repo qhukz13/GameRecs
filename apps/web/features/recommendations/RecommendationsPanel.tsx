@@ -16,7 +16,6 @@ type RecommendationsPanelProps = {
   recommendations: Recommendation[];
   onChanged: () => void;
   onError: (message: string) => void;
-  onTransientGenerated?: (items: Recommendation[]) => void;
 };
 
 export function RecommendationsPanel({
@@ -25,23 +24,16 @@ export function RecommendationsPanel({
   recommendations,
   onChanged,
   onError
-  ,onTransientGenerated
 }: RecommendationsPanelProps) {
   const toast = useToast();
   const [generating, setGenerating] = useState(false);
-  // local copy so we can refresh immediately without relying entirely on parent reload
   const [localRecs, setLocalRecs] = useState<Recommendation[]>(recommendations ?? []);
-  const [isTransient, setIsTransient] = useState(false);
 
   useEffect(() => {
-    // If we're currently showing transient generated results, don't overwrite them
-    // with the parent's empty persisted list. Only sync when not transient.
-    if (!isTransient) setLocalRecs(recommendations ?? []);
-  }, [recommendations]);
-
-  // when selected group changes, try to load any saved transient results for that group
-  useEffect(() => {
-    if (!selectedGroupId) return;
+    if (!selectedGroupId) {
+      setLocalRecs(recommendations ?? []);
+      return;
+    }
     try {
       const key = `transient_recs:${selectedGroupId}`;
       const raw = window.localStorage.getItem(key);
@@ -49,74 +41,35 @@ export function RecommendationsPanel({
         const parsed = JSON.parse(raw) as Recommendation[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           setLocalRecs(parsed);
-          setIsTransient(true);
           return;
         }
       }
     } catch (e) {
       // ignore
     }
-    // otherwise ensure we start with persisted recommendations
-    setIsTransient(false);
     setLocalRecs(recommendations ?? []);
-  }, [selectedGroupId]);
+  }, [selectedGroupId, recommendations]);
 
-  async function generate(persist: boolean = false) {
+  async function generate() {
     if (!selectedGroupId) return;
     try {
       setGenerating(true);
-      const result = await api.request<any[]>(`/groups/${selectedGroupId}/recommendations/generate?persist=${persist}`, {
+      const result = await api.request<any[]>(`/groups/${selectedGroupId}/recommendations/generate?persist=false`, {
         method: "POST",
       });
-      // Immediately show transient results if present so the user sees them
-      if (Array.isArray(result) && result.length > 0) {
+      if (Array.isArray(result)) {
         const items = result as Recommendation[];
         setLocalRecs(items);
-        setIsTransient(true);
         try {
-          if (selectedGroupId) {
-            window.localStorage.setItem(`transient_recs:${selectedGroupId}`, JSON.stringify(items));
-          }
-        } catch (e) {
-          // ignore
-        }
-        // inform parent so it can temporarily show these items as its recommendations prop
-        if (typeof onTransientGenerated === "function") {
-          try {
-            onTransientGenerated(items);
-          } catch (e) {
-            // ignore parent errors
-          }
-        }
+          window.localStorage.setItem(`transient_recs:${selectedGroupId}`, JSON.stringify(items));
+        } catch (e) {}
       }
-      if (persist) {
-        // If persisting, refresh persisted list so UI reflects stored recommendations
-        try {
-          const updated = selectedGroupId
-            ? await api.request<Recommendation[]>(`/groups/${selectedGroupId}/recommendations`)
-            : result ?? [];
-          setLocalRecs(updated ?? []);
-          setIsTransient(false);
-        } catch (e) {
-          // if fetch failed, leave transient results if present
-          if (Array.isArray(result) && result.length > 0) {
-            setLocalRecs(result ?? []);
-            setIsTransient(true);
-            try {
-              if (selectedGroupId) {
-                window.localStorage.setItem(`transient_recs:${selectedGroupId}`, JSON.stringify(result));
-              }
-            } catch (e) {}
-          }
-        }
-        onChanged();
-      }
-
+      onChanged();
       const genCount = Array.isArray(result) ? result.length : 0;
       if (genCount === 0) {
         toast.push("No recommendations were generated", "info");
       } else {
-        toast.push(`Generated ${genCount}${isTransient ? ' — showing transient results' : ''}`, "success");
+        toast.push(`Generated ${genCount} recommendations`, "success");
       }
     } catch (caught) {
       const msg = caught instanceof Error ? caught.message : "Could not generate recommendations";
@@ -130,11 +83,13 @@ export function RecommendationsPanel({
   async function clearGroupRecommendations() {
     if (!selectedGroupId) return;
     try {
-  await api.delete(`/groups/${selectedGroupId}/recommendations`);
-  setLocalRecs([]);
-  onChanged();
-  try { window.localStorage.removeItem(`transient_recs:${selectedGroupId}`); } catch (e) {}
-  toast.push("Recommendations cleared", "success");
+      await api.delete(`/groups/${selectedGroupId}/recommendations`);
+      try {
+        window.localStorage.removeItem(`transient_recs:${selectedGroupId}`);
+      } catch (e) {}
+      setLocalRecs([]);
+      onChanged();
+      toast.push("Recommendations cleared", "success");
     } catch (caught) {
       const msg = caught instanceof Error ? caught.message : "Could not clear recommendations";
       onError(msg);
@@ -143,10 +98,22 @@ export function RecommendationsPanel({
   }
 
   async function deleteRecommendation(recId: string) {
+    const target = localRecs.find((r) => r.id === recId);
+    if (target?.transient) {
+      const updated = localRecs.filter((r) => r.id !== recId);
+      setLocalRecs(updated);
+      try {
+        if (selectedGroupId) {
+          window.localStorage.setItem(`transient_recs:${selectedGroupId}`, JSON.stringify(updated));
+        }
+      } catch (e) {}
+      toast.push("Recommendation removed", "success");
+      return;
+    }
+
     try {
       await api.delete(`/recommendations/${recId}`);
-  // optimistically remove from local list and ask parent to refresh
-  setLocalRecs(localRecs.filter((r) => r.id !== recId));
+      setLocalRecs(localRecs.filter((r) => r.id !== recId));
       onChanged();
       toast.push("Recommendation removed", "success");
     } catch (caught) {
@@ -178,14 +145,6 @@ export function RecommendationsPanel({
     setClearConfirmOpen(false);
   }
 
-  function clearTransient() {
-    if (!selectedGroupId) return;
-    try { window.localStorage.removeItem(`transient_recs:${selectedGroupId}`); } catch (e) {}
-    setLocalRecs([]);
-    setIsTransient(false);
-    toast.push('Transient recommendations cleared', 'success');
-  }
-
   return (
     <Card>
       <CardHeader>
@@ -196,33 +155,51 @@ export function RecommendationsPanel({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex gap-2">
-          <Button disabled={!selectedGroupId || generating} onClick={() => void generate(false)} title="Generate recommendations (does not import games)">
+          <Button disabled={!selectedGroupId || generating} onClick={() => void generate()} title="Generate recommendations for this group">
             <Sparkles className="h-4 w-4" />
             {generating ? 'Generating...' : 'Generate'}
           </Button>
-          <Button disabled={!selectedGroupId || generating} onClick={() => void generate(true)} title="Generate and persist recommendations (imports games into DB)">
-            <Sparkles className="h-4 w-4" />
-            {generating ? 'Saving...' : 'Generate & Persist'}
-          </Button>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button disabled={!selectedGroupId} onClick={() => setClearConfirmOpen(true)}>Clear</Button>
-          <Button disabled={!selectedGroupId || !isTransient} variant="outline" onClick={() => clearTransient()}>Clear transient</Button>
-          {isTransient ? <span className="text-sm text-muted-foreground">Transient results (not saved)</span> : null}
+          <Button disabled={!selectedGroupId} onClick={() => setClearConfirmOpen(true)} variant="outline">Clear</Button>
         </div>
         <div className="space-y-2">
-          {localRecs.map((recommendation) => (
-            <div className="rounded-md border bg-background p-3" key={recommendation.id}>
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">{recommendation.game.title}</span>
-                <div className="flex items-center gap-2">
-                  <Badge>{Math.round(recommendation.score * 100)}%</Badge>
-                  <Button className="h-7 w-7 p-0" onClick={() => requestDelete(recommendation.id)}>×</Button>
+          {generating ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="rounded-md border bg-background p-3 animate-pulse">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="h-4 w-1/3 bg-muted rounded"></div>
+                    <div className="h-5 w-12 bg-muted rounded-full"></div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    <div className="h-3 w-full bg-muted rounded"></div>
+                    <div className="h-3 w-5/6 bg-muted rounded"></div>
+                  </div>
                 </div>
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">{recommendation.explanation}</p>
+              ))}
             </div>
-          ))}
+          ) : localRecs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 px-4 text-center rounded-lg border border-dashed bg-muted/40">
+              <p className="text-sm font-medium text-muted-foreground">No recommendations yet</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-[240px]">
+                {!selectedGroupId 
+                  ? "Select a group to see or generate cooperative game recommendations."
+                  : "Click 'Generate' to get AI recommendations for this group."}
+              </p>
+            </div>
+          ) : (
+            localRecs.map((recommendation) => (
+              <div className="rounded-md border bg-background p-3" key={recommendation.id}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">{recommendation.game.title}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge>{Math.round(recommendation.score * 100)}%</Badge>
+                    <Button className="h-7 w-7 p-0" onClick={() => requestDelete(recommendation.id)}>×</Button>
+                  </div>
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">{recommendation.explanation}</p>
+              </div>
+            ))
+          )}
         </div>
       </CardContent>
       <ConfirmDialog

@@ -19,9 +19,10 @@ type ReviewPanelProps = {
   reviews: Review[];
   onChanged: () => void;
   onError: (message: string) => void;
+  selectedGroupId: string | null;
 };
 
-export function ReviewPanel({ api, selectedGame, reviews, onChanged, onError }: ReviewPanelProps) {
+export function ReviewPanel({ api, selectedGame, reviews, onChanged, onError, selectedGroupId }: ReviewPanelProps) {
   const toast = useToast();
   async function createReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,7 +34,8 @@ export function ReviewPanel({ api, selectedGame, reviews, onChanged, onError }: 
         body: JSON.stringify({
           game_id: selectedGame.id,
           rating: Number(form.get("rating")),
-          review_text: String(form.get("review_text"))
+          review_text: String(form.get("review_text")),
+          group_id: selectedGroupId || null
         })
       });
   if (event.currentTarget) event.currentTarget.reset();

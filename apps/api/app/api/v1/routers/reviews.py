@@ -49,6 +49,8 @@ def create_review(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
         raise
     ProfileService(UserRepository(db), GroupRepository(db), reviews).update_user_profile(current_user.id)
+    if payload.group_id:
+        GroupRepository(db).add_game(payload.group_id, payload.game_id)
     db.commit()
     return review
 

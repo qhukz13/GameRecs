@@ -52,7 +52,21 @@ def _is_coop_game(genres: list[str] | None, tags: list[str] | None, description:
             if kw in desc_lower:
                 return True
 
-    return False
+TECHNICAL_TERMS_BLACKLIST = {
+    "steam", "remote", "controller", "sharing", "sound", "subtitle", "caption",
+    "difficulty", "comfort", "text size", "in-app", "purchase", "single-player",
+    "split screen", "play together", "color", "timed input", "family",
+    "cross-platform", "leaderboard", "cloud", "workshop",
+    "achievements", "cards", "stats", "editor", "track", "vr supported", "screen"
+}
+
+
+def _is_valid_search_term(term: str) -> bool:
+    term_lower = term.lower()
+    for word in TECHNICAL_TERMS_BLACKLIST:
+        if word in term_lower:
+            return False
+    return len(term.strip()) > 1
 
 
 def _is_new_game(release_date: datetime | None) -> bool:
@@ -92,12 +106,19 @@ class RecommendationService:
         group_genres = set()
         group_tags = set()
         try:
-            # inspect reviews for group members' games
-            # reviews.list_for_user is used elsewhere; here we query repository rows directly
-            # This is a best-effort heuristic: look up recommendations via the reviews repo
-            # and gather genres/tags from the games table for those game ids
-            # We'll use settings.recommendation_limit * 3 as a search breadth
-            search_terms = []
+            # Query the database to retrieve actual GameModel records of already played/reviewed games
+            if played_game_ids:
+                from sqlalchemy import select
+                from app.infrastructure.db.models import GameModel
+                played_games = self.games.db.scalars(
+                    select(GameModel).where(GameModel.id.in_(played_game_ids))
+                ).all()
+                for g in played_games:
+                    for gen in g.genres or []:
+                        group_genres.add(gen)
+                    for tg in g.tags or []:
+                        group_tags.add(tg)
+
             # fallback to local search if anything fails
             local_candidates = self.games.search_similar(
                 embedding=group_embedding,
@@ -111,9 +132,14 @@ class RecommendationService:
                 for tg in g.tags or []:
                     group_tags.add(tg)
 
+            valid_genres = {t for t in group_genres if _is_valid_search_term(t)}
+            valid_tags = {t for t in group_tags if _is_valid_search_term(t)}
+            if not valid_genres and not valid_tags:
+                valid_tags.update(["co-op", "multiplayer", "cooperative", "survival"])
+
             # query Steam for each term (genre or tag) to collect app ids
             steam_ids = set()
-            for term in list(group_genres)[:3] + list(group_tags)[:3]:
+            for term in list(valid_genres)[:3] + list(valid_tags)[:3]:
                 try:
                     resp = requests.get(
                         "https://store.steampowered.com/api/storesearch",
@@ -154,17 +180,21 @@ class RecommendationService:
                     # Parse release date from Steam
                     release_date = _parse_steam_release_date(d.get("release_date", {}))
                     embedding = ai.embed_text(" ".join([title, desc, *genres, *tags]))
-                    game = repo.create(
-                        external_id=f"steam:{sid}",
-                        title=title,
-                        description=desc,
-                        genres=genres,
-                        tags=tags,
-                        players_min=1,
-                        players_max=4,
-                        embedding=embedding,
-                        release_date=release_date,
-                    )
+                    existing = repo.find_by_external_id(f"steam:{sid}")
+                    if existing:
+                        game = existing
+                    else:
+                        game = repo.create(
+                            external_id=f"steam:{sid}",
+                            title=title,
+                            description=desc,
+                            genres=genres,
+                            tags=tags,
+                            players_min=1,
+                            players_max=4,
+                            embedding=embedding,
+                            release_date=release_date,
+                        )
                     # compute similarity score (1 - cosine distance)
                     # reuse search_similar logic by querying DB
                 except Exception:
@@ -204,8 +234,10 @@ class RecommendationService:
         Games must pass co-op and recency filters.
         """
         group_embedding = self.profiles.update_group_profile(group_id)
+        is_neutral = False
         if not group_embedding:
-            return []
+            group_embedding = [0.1] * settings.embedding_dim
+            is_neutral = True
 
         played_game_ids = self.reviews.played_game_ids_for_group(group_id)
         result_limit = limit or settings.recommendation_limit
@@ -222,23 +254,24 @@ class RecommendationService:
         for game, score in local_candidates:
             if not (_is_coop_game(game.genres, game.tags, game.description) and _is_new_game(game.release_date)):
                 continue
+            explanation = "Popular co-op recommendation." if is_neutral else f"Similarity score {int(score*100)}%."
             out.append({
                 "id": str(uuid4()),
                 "group_id": str(group_id),
                 "game_id": str(game.id),
                 "score": float(score),
-                "explanation": f"Similarity score {int(score*100)}%.",
+                "explanation": explanation,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "transient": True,
                 "game": {
                     "id": str(game.id),
-                    "external_id": game.external_id,
+                    "external_id": getattr(game, 'external_id', None),
                     "title": game.title,
                     "description": game.description,
                     "genres": game.genres,
                     "tags": game.tags,
-                    "players_min": game.players_min,
-                    "players_max": game.players_max,
+                    "players_min": getattr(game, 'players_min', 1),
+                    "players_max": getattr(game, 'players_max', 4),
                     "release_date": game.release_date.isoformat() if game.release_date else None,
                     "created_at": game.created_at.isoformat() if getattr(game, 'created_at', None) else datetime.now(timezone.utc).isoformat(),
                 },
@@ -247,23 +280,24 @@ class RecommendationService:
         # Fallback: if no co-op/new games pass the filter, show top similarity matches without strict filtering
         if not out and local_candidates:
             for game, score in local_candidates:
+                explanation = "Popular co-op recommendation." if is_neutral else f"Similarity score {int(score*100)}%."
                 out.append({
                     "id": str(uuid4()),
                     "group_id": str(group_id),
                     "game_id": str(game.id),
                     "score": float(score),
-                    "explanation": f"Similarity score {int(score*100)}%.",
+                    "explanation": explanation,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "transient": True,
                     "game": {
                         "id": str(game.id),
-                        "external_id": game.external_id,
+                        "external_id": getattr(game, 'external_id', None),
                         "title": game.title,
                         "description": game.description,
                         "genres": game.genres,
                         "tags": game.tags,
-                        "players_min": game.players_min,
-                        "players_max": game.players_max,
+                        "players_min": getattr(game, 'players_min', 1),
+                        "players_max": getattr(game, 'players_max', 4),
                         "release_date": game.release_date.isoformat() if game.release_date else None,
                         "created_at": game.created_at.isoformat() if getattr(game, 'created_at', None) else datetime.now(timezone.utc).isoformat(),
                     },
@@ -272,17 +306,33 @@ class RecommendationService:
         # --- Phase 2: try to enrich with Steam candidates (best-effort) ---
         logger = logging.getLogger(__name__)
         try:
-            # gather genres/tags from local candidates as seed terms for Steam search
+            # gather genres/tags from played games first, then local candidates as seed terms for Steam search
             terms = set()
+            if played_game_ids:
+                from sqlalchemy import select
+                from app.infrastructure.db.models import GameModel
+                played_games = self.games.db.scalars(
+                    select(GameModel).where(GameModel.id.in_(played_game_ids))
+                ).all()
+                for game in played_games:
+                    for gen in game.genres or []:
+                        terms.add(gen)
+                    for tg in game.tags or []:
+                        terms.add(tg)
+
             for game, _ in local_candidates:
                 for gen in game.genres or []:
                     terms.add(gen)
                 for tg in game.tags or []:
                     terms.add(tg)
 
+            valid_terms = {t for t in terms if _is_valid_search_term(t)}
+            if not valid_terms:
+                valid_terms = {"co-op", "multiplayer", "cooperative", "survival"}
+
             # query Steam storesearch for each term
             steam_ids: set[str] = set()
-            for term in list(terms)[:6]:
+            for term in list(valid_terms)[:6]:
                 try:
                     resp = requests.get(
                         "https://store.steampowered.com/api/storesearch",
@@ -299,7 +349,19 @@ class RecommendationService:
             # fetch details for each steam id
             norm_group = normalize(group_embedding)
             ai = self.ai
-            existing_external_ids = {g.get("game_id") for g in out}
+            
+            # get external IDs of played games
+            played_external_ids = set()
+            if played_game_ids:
+                from sqlalchemy import select
+                from app.infrastructure.db.models import GameModel
+                played_external_ids = set(
+                    self.games.db.scalars(
+                        select(GameModel.external_id).where(GameModel.id.in_(played_game_ids))
+                    ).all()
+                )
+
+            existing_external_ids = {g.get("game", {}).get("external_id") for g in out if g.get("game")}
             for sid in list(steam_ids)[:result_limit * 5]:
                 try:
                     r = requests.get(
@@ -325,19 +387,20 @@ class RecommendationService:
                         continue
                     if not (_is_coop_game(genres, tags_list) and _is_new_game(release_date)):
                         continue
-                    # skip if already in local results
+                    # skip if already in local results or played/reviewed
                     steam_game_id = f"steam:{sid}"
-                    if steam_game_id in existing_external_ids:
+                    if steam_game_id in existing_external_ids or steam_game_id in played_external_ids:
                         continue
                     emb = ai.embed_text(" ".join([title, desc, *genres, *tags_list]))
                     norm_emb = normalize(emb)
                     score = sum(a * b for a, b in zip(norm_group, norm_emb)) if norm_emb and norm_group else 0.0
+                    explanation = "Popular co-op recommendation." if is_neutral else f"Similarity score {int(score*100)}%."
                     out.append({
                         "id": str(uuid4()),
                         "group_id": str(group_id),
                         "game_id": steam_game_id,
                         "score": float(score),
-                        "explanation": f"Similarity score {int(score*100)}%.",
+                        "explanation": explanation,
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "transient": True,
                         "game": {

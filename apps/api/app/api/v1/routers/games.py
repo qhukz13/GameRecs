@@ -34,7 +34,12 @@ def create_game(
         players_min=payload.players_min,
         players_max=payload.players_max,
         embedding=embedding,
+        release_date=payload.release_date,
     )
+    if payload.group_id:
+        from app.infrastructure.repositories.groups import GroupRepository
+
+        GroupRepository(db).add_game(payload.group_id, game.id)
     db.commit()
     return game
 

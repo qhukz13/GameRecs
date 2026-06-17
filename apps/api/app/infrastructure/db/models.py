@@ -58,6 +58,9 @@ class GroupModel(Base):
     recommendations: Mapped[list["RecommendationModel"]] = relationship(
         back_populates="group", cascade="all, delete-orphan"
     )
+    games: Mapped[list["GroupGameModel"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
 
 
 class GroupMemberModel(Base):
@@ -69,6 +72,17 @@ class GroupMemberModel(Base):
 
     group: Mapped[GroupModel] = relationship(back_populates="members")
     user: Mapped[UserModel] = relationship(back_populates="memberships")
+
+
+class GroupGameModel(Base):
+    __tablename__ = "group_games"
+
+    group_id: Mapped[UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    group: Mapped[GroupModel] = relationship(back_populates="games")
+    game: Mapped["GameModel"] = relationship()
 
 
 class GameModel(Base):

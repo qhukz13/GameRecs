@@ -10,6 +10,7 @@ class ReviewCreate(BaseModel):
     game_id: UUID
     rating: int = Field(ge=1, le=10)
     review_text: str = Field(min_length=2)
+    group_id: UUID | None = None
 
 
 class ReviewRead(BaseModel):

@@ -33,6 +33,13 @@ CREATE TABLE group_members (
     PRIMARY KEY (group_id, user_id)
 );
 
+CREATE TABLE group_games (
+    group_id uuid NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (group_id, game_id)
+);
+
 CREATE TABLE games (
     id uuid PRIMARY KEY,
     external_id varchar(120) UNIQUE,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import requests
 
+from uuid import UUID
 from pydantic import BaseModel
 
 _log = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def steam_search(q: str, db: Session = Depends(deps.get_db)) -> list[dict[str, A
 
 class SteamImportBody(BaseModel):
     id: str
+    group_id: UUID | None = None
 
 
 @router.post("/steam/import", response_model=GameRead)
@@ -83,10 +85,13 @@ def steam_import(
         # Pass release_date to GameRepository.create
 
         repo = GameRepository(db)
+        from app.infrastructure.repositories.groups import GroupRepository
 
         # If the game was already imported, return the existing one (idempotent)
         existing = repo.find_by_external_id(f"steam:{sid}")
         if existing:
+            if body.group_id:
+                GroupRepository(db).add_game(body.group_id, existing.id)
             db.commit()
             return GameRead.model_validate(existing)
 
@@ -101,10 +106,25 @@ def steam_import(
             embedding=embedding,
             release_date=release_date,
         )
+        if body.group_id:
+            GroupRepository(db).add_game(body.group_id, created.id)
         db.commit()
+        _log.info("Successfully imported game '%s' (Steam ID: %s)", title, sid)
         return GameRead.model_validate(created)
     except HTTPException:
         raise
+    except requests.exceptions.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 429:
+            _log.warning("Steam API rate limit exceeded during import for sid=%s", sid)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Steam API rate limit exceeded. Please try again later.",
+            )
+        _log.exception("Steam API HTTP error during import for sid=%s", sid)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Steam API returned an error: {exc}",
+        )
     except Exception as exc:
         _log.exception("Steam import failed for sid=%s", sid)
         raise HTTPException(

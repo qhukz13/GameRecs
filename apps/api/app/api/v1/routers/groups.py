@@ -9,7 +9,10 @@ from app.infrastructure.db.models import UserModel
 from app.infrastructure.db.session import get_db
 from app.infrastructure.repositories.groups import GroupRepository
 from app.infrastructure.repositories.users import UserRepository
+from app.infrastructure.repositories.reviews import ReviewRepository
 from app.schemas.group import GroupCreate, GroupDetail, GroupInvite, GroupRead
+from app.schemas.review import ReviewWithGame
+from app.schemas.game import GameRead
 
 router = APIRouter()
 
@@ -93,4 +96,29 @@ def delete_group(
     groups.delete(group_id)
     db.commit()
     return None
+
+
+@router.get("/{group_id}/reviews", response_model=list[ReviewWithGame])
+def list_group_reviews(
+    group_id: UUID,
+    current_user: Annotated[UserModel, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    groups = GroupRepository(db)
+    if not groups.is_member(group_id, current_user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return ReviewRepository(db).list_for_group(group_id)
+
+
+@router.get("/{group_id}/games", response_model=list[GameRead])
+def list_group_games(
+    group_id: UUID,
+    current_user: Annotated[UserModel, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    groups = GroupRepository(db)
+    if not groups.is_member(group_id, current_user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return groups.list_games(group_id)
+
 

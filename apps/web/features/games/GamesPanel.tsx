@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiClient, Game } from "@/lib/api";
-import { useState } from "react";
+import { ApiClient, Game, Review } from "@/lib/api";
+import { useState, useMemo, useEffect } from "react";
 import { ConfirmDialog } from "@/components/ui/confirm";
 import { useToast } from "@/components/ui/toast";
 
@@ -20,6 +20,8 @@ type GamesPanelProps = {
   onSelectGame: (gameId: string) => void;
   onChanged: () => void;
   onError: (message: string) => void;
+  reviews?: Review[];
+  selectedGroupId?: string | null;
 };
 
 function splitList(value: FormDataEntryValue | null) {
@@ -29,17 +31,29 @@ function splitList(value: FormDataEntryValue | null) {
     .filter(Boolean);
 }
 
-export function GamesPanel({ api, games, selectedGameId, onSelectGame, onChanged, onError }: GamesPanelProps) {
+export function GamesPanel({
+  api,
+  games,
+  selectedGameId,
+  onSelectGame,
+  onChanged,
+  onError,
+  reviews = [],
+  selectedGroupId = null
+}: GamesPanelProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [steamQuery, setSteamQuery] = useState("");
   const [steamResults, setSteamResults] = useState<any[]>([]);
   const toast = useToast();
+
+  const filteredGames = games;
+
   async function createGame(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
-      await api.request<Game>("/games", {
+      const newGame = await api.request<Game>("/games", {
         method: "POST",
         body: JSON.stringify({
           external_id: String(form.get("external_id") || "") || null,
@@ -48,10 +62,14 @@ export function GamesPanel({ api, games, selectedGameId, onSelectGame, onChanged
           genres: splitList(form.get("genres")),
           tags: splitList(form.get("tags")),
           players_min: Number(form.get("players_min")),
-          players_max: Number(form.get("players_max"))
+          players_max: Number(form.get("players_max")),
+          group_id: selectedGroupId || null
         })
       });
-  if (event.currentTarget) event.currentTarget.reset();
+      if (event.currentTarget) event.currentTarget.reset();
+      if (newGame && newGame.id) {
+        onSelectGame(newGame.id);
+      }
       onChanged();
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : "Could not create game");
@@ -70,13 +88,19 @@ export function GamesPanel({ api, games, selectedGameId, onSelectGame, onChanged
 
   async function importSteam(appId: string) {
     try {
-      await api.request(`/external/steam/import`, {
+      const newGame = await api.request<Game>(`/external/steam/import`, {
         method: "POST",
-        body: JSON.stringify({ id: appId }),
+        body: JSON.stringify({
+          id: appId,
+          group_id: selectedGroupId || null
+        }),
       });
       toast.push("Imported game from Steam", "success");
       setSteamResults([]);
       setSteamQuery("");
+      if (newGame && newGame.id) {
+        onSelectGame(newGame.id);
+      }
       onChanged();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Import failed");
@@ -158,38 +182,49 @@ export function GamesPanel({ api, games, selectedGameId, onSelectGame, onChanged
           </Button>
         </form>
         <div className="max-h-80 space-y-2 overflow-auto pr-1">
-          {games.map((game) => (
-            <div
-              className={`w-full rounded-md border bg-background p-3 text-left transition-colors hover:bg-muted cursor-pointer ${
-                selectedGameId === game.id ? "border-primary" : ""
-              }`}
-              key={game.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelectGame(game.id)}
-              onKeyDown={(e: any) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  onSelectGame(game.id);
-                }
-              }}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">{game.title}</span>
-                <div className="flex items-center gap-2">
-                  <Badge>{game.players_min}-{game.players_max}p</Badge>
-                  <Button className="h-7 w-7 p-0" onClick={(e: any) => { e.stopPropagation(); requestDelete(game.id); }}>
-                    ×
-                  </Button>
+          {filteredGames.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 px-4 text-center rounded-lg border border-dashed bg-muted/40">
+              <p className="text-sm font-medium text-muted-foreground">
+                Group library is empty
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-[240px]">
+                Use the search above to find and import/select games from Steam, or add custom games using the form below to write reviews.
+              </p>
+            </div>
+          ) : (
+            filteredGames.map((game) => (
+              <div
+                className={`w-full rounded-md border bg-background p-3 text-left transition-colors hover:bg-muted cursor-pointer ${
+                  selectedGameId === game.id ? "border-primary" : ""
+                }`}
+                key={game.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectGame(game.id)}
+                onKeyDown={(e: any) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectGame(game.id);
+                  }
+                }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">{game.title}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge>{game.players_min}-{game.players_max}p</Badge>
+                    <Button className="h-7 w-7 p-0" onClick={(e: any) => { e.stopPropagation(); requestDelete(game.id); }}>
+                      ×
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {[...game.genres, ...game.tags].slice(0, 4).map((item, i) => (
+                    <Badge key={`${item}-${i}`}>{item}</Badge>
+                  ))}
                 </div>
               </div>
-              <div className="mt-2 flex flex-wrap gap-1">
-                {[...game.genres, ...game.tags].slice(0, 4).map((item, i) => (
-                  <Badge key={`${item}-${i}`}>{item}</Badge>
-                ))}
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </CardContent>
       <ConfirmDialog

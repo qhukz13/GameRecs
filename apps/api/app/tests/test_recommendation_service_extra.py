@@ -93,3 +93,23 @@ def test_generate_excludes_played_games() -> None:
     # only g2 should be recommended because g1 is excluded
     assert len(saved) == 1
     assert recs.saved[0].game_id == g2.id
+
+
+def test_generate_candidates_fallback_when_group_profile_missing() -> None:
+    group_id = uuid4()
+    
+    g1 = _DummyGame(uuid4(), "Alpha Co-op", tags=["co-op"], release_date=datetime(2021, 6, 15, tzinfo=timezone.utc))
+    games = _GamesRepoStub([(g1, 0.9)])
+    reviews = _ReviewsRepoStub()
+    recs = _RecommendationsRepoStub()
+    profiles = _ProfileServiceStub(embedding=None)  # missing group profile
+    ai = _AIStub()
+    
+    service = RecommendationService(games=games, reviews=reviews, recommendations=recs, profiles=profiles, ai=ai)
+    candidates = service.generate_candidates_for_group(group_id, limit=5)
+    
+    # generate_candidates_for_group should succeed using a neutral embedding and return candidates
+    assert len(candidates) == 1
+    assert candidates[0]["game_id"] == str(g1.id)
+    assert candidates[0]["explanation"] == "Popular co-op recommendation."
+

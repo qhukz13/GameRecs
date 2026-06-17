@@ -33,27 +33,41 @@ class OllamaProvider(BaseLLMProvider):
 
     def _embed(self, text: str) -> list[float]:
         dim = settings.embedding_dim
-        url = f"{self.base}/api/embed"
-        payload = {"model": self.model, "input": text}
-        resp = requests.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
         raw: list[float] = []
-        # Ollama /api/embed returns {"model":"...", "embeddings":[[...]]} for single input
-        embeddings = data.get("embeddings")
-        if isinstance(embeddings, list) and len(embeddings) > 0:
-            first = embeddings[0]
-            if isinstance(first, list):
-                raw = list(map(float, first))
+        try:
+            url = f"{self.base}/api/embed"
+            payload = {"model": self.model, "input": text}
+            resp = requests.post(url, json=payload, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            embeddings = data.get("embeddings")
+            if isinstance(embeddings, list) and len(embeddings) > 0:
+                first = embeddings[0]
+                if isinstance(first, list):
+                    raw = list(map(float, first))
+                else:
+                    raw = list(map(float, embeddings))
             else:
-                raw = list(map(float, embeddings))
-        else:
-            # Fallback for older /api/embeddings format: {"embedding": [...]}
-            emb = data.get("embedding")
-            if isinstance(emb, list):
-                raw = list(map(float, emb))
+                emb = data.get("embedding")
+                if isinstance(emb, list):
+                    raw = list(map(float, emb))
+                else:
+                    raise ValueError("Unexpected embed response from ollama")
+        except requests.exceptions.HTTPError as err:
+            if err.response is not None and err.response.status_code == 404:
+                url = f"{self.base}/api/embeddings"
+                payload = {"model": self.model, "prompt": text}
+                resp = requests.post(url, json=payload, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+                emb = data.get("embedding")
+                if isinstance(emb, list):
+                    raw = list(map(float, emb))
+                else:
+                    raise ValueError("Unexpected embeddings response from ollama")
             else:
-                raise ValueError("Unexpected embed response from ollama")
+                raise
+
         # Ensure the vector matches the configured dimension
         if len(raw) < dim:
             raw.extend([0.0] * (dim - len(raw)))
@@ -73,22 +87,21 @@ class OllamaProvider(BaseLLMProvider):
         embedding = self.embed_text(review_text)
         # Use prompt to ask model to extract liked/disliked/sentiment in JSON
         prompt = (
-            "Extract liked_features (list), disliked_features (list), and sentiment (positive/neutral/negative)"
-            f" from the following user review and return a JSON object:\n\n{review_text}\n\nRating: {rating}\n\nRespond with only JSON."
+            "Extract liked_features (list of strings), disliked_features (list of strings), and sentiment (positive/neutral/negative) "
+            f"from the following user review and return a JSON object:\n\n{review_text}\n\nRating: {rating}\n\nRespond with only JSON."
         )
         try:
             url = f"{self.base}/api/generate"
-            payload = {"model": self.model, "input": prompt}
+            payload = {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
             resp = requests.post(url, json=payload, timeout=15)
             resp.raise_for_status()
             out = resp.json()
             text = ""
             if isinstance(out, dict):
-                # Ollama may return {'id':..., 'model':..., 'object':..., 'data': [{'content': '...'}]}
                 if "data" in out and isinstance(out["data"], list):
                     text = "".join(item.get("content", "") for item in out["data"]) or out.get("content", "")
                 else:
-                    text = out.get("content", "") or json.dumps(out)
+                    text = out.get("content", "") or out.get("response", "") or json.dumps(out)
             else:
                 text = str(out)
 
@@ -121,13 +134,13 @@ class OllamaProvider(BaseLLMProvider):
         )
         try:
             url = f"{self.base}/api/generate"
-            payload = {"model": self.model, "input": prompt}
+            payload = {"model": self.model, "prompt": prompt, "stream": False}
             resp = requests.post(url, json=payload, timeout=10)
             resp.raise_for_status()
             out = resp.json()
             if isinstance(out, dict) and "data" in out:
                 return "".join(item.get("content", "") for item in out["data"]) or str(out)
-            return str(out)
+            return out.get("response", "") or str(out)
         except Exception as exc:
             _logger.warning("Ollama explain_recommendation failed (%s), falling back to deterministic provider", exc)
             return AIService().explain_recommendation(game, score, group_features)
