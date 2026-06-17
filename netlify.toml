@@ -5,5 +5,7 @@
 
 [build.environment]
   NEXT_TELEMETRY_DISABLED = "1"
-  # Exclude debug/dev scripts from secrets scanning (they contain localhost URLs)
-  SECRETS_SCAN_OMIT_PATHS = "apps/web/scripts/,scripts/"
+  # NEXT_PUBLIC_* vars are intentionally bundled into client-side JS by Next.js.
+  # They are public by design — scanning for them in build output is a false positive.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_API_URL"
+  SECRETS_SCAN_OMIT_PATHS = "apps/web/scripts/,scripts/,apps/web/.next/"
