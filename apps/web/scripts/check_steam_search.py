@@ -1,5 +1,5 @@
-import requests
-API='http://localhost:8000/api/v1'
+import requests, os
+API = os.environ.get('NEXT_PUBLIC_API_URL', 'http://localhost:8000/api/v1')
 email='alex@example.com'
 password='password123'
 r = requests.post(f'{API}/auth/login', json={'email':email,'password':password})

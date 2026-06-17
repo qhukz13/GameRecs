@@ -1,0 +1,9 @@
+[build]
+  base = "apps/web"
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NEXT_TELEMETRY_DISABLED = "1"
+  # Exclude debug/dev scripts from secrets scanning (they contain localhost URLs)
+  SECRETS_SCAN_OMIT_PATHS = "apps/web/scripts/,scripts/"

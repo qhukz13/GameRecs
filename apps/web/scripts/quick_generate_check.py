@@ -1,5 +1,5 @@
-import requests, sys, time
-API='http://localhost:8000/api/v1'
+import requests, sys, time, os
+API = os.environ.get('NEXT_PUBLIC_API_URL', 'http://localhost:8000/api/v1')
 # demo creds
 email='alex@example.com'
 password='password123'
