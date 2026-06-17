@@ -9,3 +9,6 @@
   # They are public by design — scanning for them in build output is a false positive.
   SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_API_URL"
   SECRETS_SCAN_OMIT_PATHS = "apps/web/scripts/,scripts/,apps/web/.next/"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
