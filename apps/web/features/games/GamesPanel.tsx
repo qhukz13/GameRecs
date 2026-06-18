@@ -45,9 +45,18 @@ export function GamesPanel({
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [steamQuery, setSteamQuery] = useState("");
   const [steamResults, setSteamResults] = useState<any[]>([]);
+  const [gameSearch, setGameSearch] = useState("");
+  const [showManualAdd, setShowManualAdd] = useState(false);
   const toast = useToast();
 
-  const filteredGames = games;
+  const filteredGames = useMemo(() => {
+    let result = games;
+    if (gameSearch.trim()) {
+      const q = gameSearch.toLowerCase();
+      result = result.filter(g => g.title.toLowerCase().includes(q));
+    }
+    return result.slice(0, 50);
+  }, [games, gameSearch]);
 
   async function createGame(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -164,23 +173,45 @@ export function GamesPanel({
             </div>
           ) : null}
         </div>
-        <form className="grid gap-2" onSubmit={createGame}>
-          <Input name="title" placeholder="Game title" required />
-          <Textarea name="description" placeholder="Co-op loop, pacing, tone" required />
-          <div className="grid grid-cols-2 gap-2">
-            <Input name="genres" placeholder="genres" />
-            <Input name="tags" placeholder="tags" />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Input name="external_id" placeholder="external id" />
-            <Input name="players_min" type="number" min={1} defaultValue={2} />
-            <Input name="players_max" type="number" min={1} defaultValue={4} />
-          </div>
-          <Button>
-            <Plus className="h-4 w-4" />
-            Add game
+        <div>
+          <Button 
+            type="button" 
+            variant="outline" 
+            onClick={() => setShowManualAdd(!showManualAdd)}
+            className="w-full text-muted-foreground"
+          >
+            {showManualAdd ? "Hide manual addition" : "Add custom game manually"}
           </Button>
-        </form>
+          {showManualAdd && (
+            <form className="grid gap-2 mt-2 p-3 border rounded-md bg-muted/20" onSubmit={createGame}>
+              <Input name="title" placeholder="Game title" required />
+              <Textarea name="description" placeholder="Co-op loop, pacing, tone" required />
+              <div className="grid grid-cols-2 gap-2">
+                <Input name="genres" placeholder="genres" />
+                <Input name="tags" placeholder="tags" />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Input name="external_id" placeholder="external id" />
+                <Input name="players_min" type="number" min={1} defaultValue={2} />
+                <Input name="players_max" type="number" min={1} defaultValue={4} />
+              </div>
+              <Button>
+                <Plus className="h-4 w-4" />
+                Add game
+              </Button>
+            </form>
+          )}
+        </div>
+        <div className="flex gap-2 items-center justify-between border-t pt-4">
+          <Input
+            placeholder="Filter library..."
+            value={gameSearch}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGameSearch(e.target.value)}
+          />
+          <span className="text-xs text-muted-foreground whitespace-nowrap px-2">
+            {filteredGames.length} {filteredGames.length < games.length ? `of ${games.length}` : 'games'}
+          </span>
+        </div>
         <div className="max-h-80 space-y-2 overflow-auto pr-1">
           {filteredGames.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 px-4 text-center rounded-lg border border-dashed bg-muted/40">

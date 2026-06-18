@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     access_token_minutes: int = 30
     refresh_token_days: int = 30
     embedding_dim: int = 8
-    recommendation_limit: int = 5
+    recommendation_limit: int = 10
     # AI provider settings
     ai_provider: str = "local"  # options: local, ollama
     ollama_url: str = "http://localhost:11434"

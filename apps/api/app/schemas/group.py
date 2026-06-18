@@ -11,7 +11,7 @@ class GroupCreate(BaseModel):
 
 
 class GroupInvite(BaseModel):
-    email: EmailStr
+    username: str
 
 
 class GroupRead(BaseModel):

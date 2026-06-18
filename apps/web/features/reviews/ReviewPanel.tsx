@@ -93,7 +93,7 @@ export function ReviewPanel({ api, selectedGame, reviews, onChanged, onError, se
           </Button>
         </form>
         <div className="space-y-2">
-          {reviews.slice(0, 5).map((review) => (
+          {reviews.map((review) => (
             <div className="rounded-md border bg-background p-3" key={review.id}>
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium">{review.game?.title ?? review.game_id}</span>

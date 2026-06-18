@@ -89,18 +89,6 @@ def _is_coop_game(genres: list[str] | None, tags: list[str] | None, description:
         for kw in coop_keywords:
             if kw in term:
                 return True
-    
-        # Additional heuristic: tags contain "multiplayer" but description has "co-op" -> still valid
-        
-        # Parse release_date from Steam API response
-        # Ensure `data` is explicitly validated by the caller
-        if not data:
-            raise ValueError("Data must be provided and not empty when parsing Steam release date.")
-        release_date = _parse_steam_release_date(data)
-        
-        # Use parsed release_date for further checks
-        if release_date:
-            return True
 
 # Ensure proper logging for skipped items
     has_multiplayer = any("multiplayer" in t.lower() for t in (tags or []))

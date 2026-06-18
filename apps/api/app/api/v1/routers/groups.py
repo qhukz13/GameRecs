@@ -68,7 +68,7 @@ def invite_user(
     group = groups.get(group_id)
     if not group or group.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-    user = UserRepository(db).get_by_email(payload.email)
+    user = UserRepository(db).get_by_username(payload.username)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     groups.add_member(group_id, user.id)

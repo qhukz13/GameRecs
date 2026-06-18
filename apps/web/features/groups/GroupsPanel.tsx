@@ -53,7 +53,7 @@ export function GroupsPanel({
     try {
       await api.request(`/groups/${selectedGroupId}/invite`, {
         method: "POST",
-        body: JSON.stringify({ email: String(form.get("email")) })
+        body: JSON.stringify({ username: String(form.get("username")) })
       });
   if (event.currentTarget) event.currentTarget.reset();
       onChanged();
@@ -117,7 +117,7 @@ export function GroupsPanel({
           ))}
         </div>
         <form className="flex gap-2" onSubmit={invite}>
-          <Input name="email" placeholder="friend@example.com" type="email" disabled={!selectedGroupId} required />
+          <Input name="username" placeholder="Username" type="text" disabled={!selectedGroupId} required />
           <Button size="icon" title="Invite user" disabled={!selectedGroupId}>
             <Send className="h-4 w-4" />
           </Button>
