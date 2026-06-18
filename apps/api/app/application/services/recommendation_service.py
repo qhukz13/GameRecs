@@ -27,12 +27,12 @@ def _is_coop_game(genres: list[str] | None, tags: list[str] | None, description:
     """
     # Strict co-op keywords — must contain one of these exact substrings in genres/tags/description
     coop_keywords = [
-        "co-op", "cooperative", "coop", "co-op campaign",
+        "co-op", "multiplayer", "cooperative", "coop", "co-op campaign",
         "online co-op", "local co-op", "co-op multiplayer",
         "pve co-op", "co-op pve", "co-op survival",
         "cooperative play", "cooperative gameplay",
         "co-op mode", "co-op action", "co-op adventure",
-        "co-op shooter", "co-op strategy",
+        "co-op shooter", "co-op strategy"
     ]
     all_terms = [t.lower() for t in (genres or []) + (tags or [])]
     if description:
