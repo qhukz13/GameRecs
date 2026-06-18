@@ -5,7 +5,9 @@ from app.application.services.steam_parsing import _parse_steam_release_date
 from app.application.services.ai_service import AIService
 from app.application.services.profile_service import ProfileService
 from app.core.config import settings
-from app.infrastructure.db.models import RecommendationModel
+from app.infrastructure.db.models import RecommendationModel, GameModel
+from sqlalchemy import select
+from collections import Counter
 from app.infrastructure.repositories.games import GameRepository
 from app.infrastructure.repositories.recommendations import RecommendationRepository
 from app.infrastructure.repositories.reviews import ReviewRepository
@@ -51,6 +53,8 @@ def _is_coop_game(genres: list[str] | None, tags: list[str] | None, description:
         for kw in coop_keywords:
             if kw in desc_lower:
                 return True
+    
+    return False
 
 TECHNICAL_TERMS_BLACKLIST = {
     "steam", "remote", "controller", "sharing", "sound", "subtitle", "caption",
@@ -103,14 +107,11 @@ class RecommendationService:
 
         # Simple Steam search approach: use group's known genres/tags collected from games in DB
         # collect genres/tags from group members' reviewed games
-        from collections import Counter
         group_genres = Counter()
         group_tags = Counter()
         try:
             # Query the database to retrieve actual GameModel records of already played/reviewed games
             if played_game_ids:
-                from sqlalchemy import select
-                from app.infrastructure.db.models import GameModel
                 played_games = self.games.db.scalars(
                     select(GameModel).where(GameModel.id.in_(played_game_ids))
                 ).all()
@@ -340,11 +341,8 @@ class RecommendationService:
         logger = logging.getLogger(__name__)
         try:
             # gather genres/tags from played games first, then local candidates as seed terms for Steam search
-            from collections import Counter
             terms = Counter()
             if played_game_ids:
-                from sqlalchemy import select
-                from app.infrastructure.db.models import GameModel
                 played_games = self.games.db.scalars(
                     select(GameModel).where(GameModel.id.in_(played_game_ids))
                 ).all()
@@ -388,8 +386,6 @@ class RecommendationService:
             # get external IDs of played games
             played_external_ids = set()
             if played_game_ids:
-                from sqlalchemy import select
-                from app.infrastructure.db.models import GameModel
                 played_external_ids = set(
                     self.games.db.scalars(
                         select(GameModel.external_id).where(GameModel.id.in_(played_game_ids))
